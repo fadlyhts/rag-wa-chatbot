@@ -60,7 +60,9 @@ async def webhook(
 async def handle_incoming_message_raw(data: dict, request_id: str, background_tasks: BackgroundTasks, db: Session):
     """Handle incoming message with raw dict data"""
     # Extract phone number - WAHA format varies
-    phone = data.get("from") or data.get("chatId", "").split("@")[0]
+    # Remove @c.us suffix if present to get clean phone number
+    phone_raw = data.get("from") or data.get("chatId", "")
+    phone = phone_raw.split("@")[0] if "@" in phone_raw else phone_raw
     message_text = data.get("body") or data.get("text") or ""
     message_id = data.get("id") or data.get("messageId", "")
     
@@ -183,8 +185,9 @@ def send_auto_reply(phone: str, user_message: str, request_id: str):
         reply_text = generate_simple_response(user_message)
         logger.info(f"[{request_id}] Generated reply: {reply_text[:50]}...")
         
-        # Send message
-        logger.info(f"[{request_id}] Sending message to {phone}")
+        # Send message - phone should be clean number without @c.us
+        # The send_message method will add @c.us suffix
+        logger.info(f"[{request_id}] Sending message to {phone} (will format as {phone}@c.us)")
         result = waha.send_message(to=phone, text=reply_text)
         
         logger.info(f"[{request_id}] Auto-reply sent successfully to {phone}. Result: {result}")
