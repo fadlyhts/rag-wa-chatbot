@@ -10,10 +10,14 @@ from app.security.rate_limiter import RateLimiter
 from app.config import settings
 import logging
 import time
+import redis
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 rate_limiter = RateLimiter()
+
+# Redis client for message deduplication
+redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 @router.post("/webhook")
@@ -65,6 +69,18 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     phone = phone_raw.split("@")[0] if "@" in phone_raw else phone_raw
     message_text = data.get("body") or data.get("text") or ""
     message_id = data.get("id") or data.get("messageId", "")
+    
+    # Deduplication: Check if we already processed this message
+    # WAHA sends both 'message' and 'message.any' events for the same message
+    dedup_key = f"msg:{message_id}"
+    try:
+        if redis_client.exists(dedup_key):
+            logger.info(f"[{request_id}] Duplicate message {message_id}, skipping")
+            return {"status": "duplicate", "request_id": request_id, "message_id": message_id}
+        # Mark as processed for 60 seconds
+        redis_client.setex(dedup_key, 60, "1")
+    except Exception as e:
+        logger.warning(f"[{request_id}] Redis deduplication failed: {e}, continuing anyway")
     
     logger.info(f"[{request_id}] Processing message from {phone}: {message_text[:50]}")
     
