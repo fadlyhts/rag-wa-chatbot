@@ -69,6 +69,27 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     phone = phone_raw.split("@")[0] if "@" in phone_raw else phone_raw
     message_text = data.get("body") or data.get("text") or ""
     message_id = data.get("id") or data.get("messageId", "")
+    from_me = data.get("fromMe", False)
+    
+    # FILTER 1: Ignore messages sent by the bot itself
+    if from_me:
+        logger.info(f"[{request_id}] Ignoring message from bot itself (fromMe=True)")
+        return {"status": "ignored_own_message", "request_id": request_id}
+    
+    # FILTER 2: Ignore group messages (chatId contains @g.us)
+    if "@g.us" in phone_raw:
+        logger.info(f"[{request_id}] Ignoring group message from {phone_raw}")
+        return {"status": "ignored_group", "request_id": request_id}
+    
+    # FILTER 3: Ignore status/broadcast messages (numbers starting with 120363)
+    if phone.startswith("120363") or phone.startswith("status"):
+        logger.info(f"[{request_id}] Ignoring status/broadcast message from {phone}")
+        return {"status": "ignored_status", "request_id": request_id}
+    
+    # FILTER 4: Only process valid phone numbers (6-15 digits)
+    if not phone.isdigit() or len(phone) < 6 or len(phone) > 15:
+        logger.info(f"[{request_id}] Ignoring invalid phone number: {phone}")
+        return {"status": "ignored_invalid_phone", "request_id": request_id}
     
     # Deduplication: Check if we already processed this message
     # WAHA sends both 'message' and 'message.any' events for the same message

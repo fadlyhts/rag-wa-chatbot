@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.api.endpoints import webhook, health, messages, stats, test
 from app.database.session import engine
@@ -12,17 +13,21 @@ from app.database.base import Base
 from app.config import settings
 from app.utils.logger import setup_logging
 from app.exceptions import ChatbotException
+from app.jobs.keep_alive import keep_waha_session_alive
 
 # Setup logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Background scheduler for periodic tasks
+scheduler = BackgroundScheduler()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager
-    - Startup: Initialize database tables
+    - Startup: Initialize database tables, start background jobs
     - Shutdown: Cleanup resources
     """
     # Startup
@@ -36,10 +41,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization error: {str(e)}")
     
+    # Start background scheduler
+    try:
+        # Add keep-alive job - runs every 5 minutes
+        scheduler.add_job(
+            keep_waha_session_alive,
+            'interval',
+            minutes=5,
+            id='waha_keep_alive',
+            replace_existing=True
+        )
+        scheduler.start()
+        logger.info("Background scheduler started with keep-alive job")
+    except Exception as e:
+        logger.error(f"Scheduler initialization error: {str(e)}")
+    
     yield
     
     # Shutdown
     logger.info(f"Shutting down {settings.APP_NAME}")
+    
+    # Stop scheduler
+    try:
+        scheduler.shutdown()
+        logger.info("Background scheduler stopped")
+    except Exception as e:
+        logger.error(f"Scheduler shutdown error: {str(e)}")
 
 
 # Create FastAPI application
