@@ -42,9 +42,9 @@ class Settings(BaseSettings):
     
     # Gemini
     GOOGLE_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-1.5-flash"
-    GEMINI_EMBEDDING_MODEL: str = "models/text-embedding-004"
-    GEMINI_MAX_TOKENS: int = 500
+    GEMINI_MODEL: str = "gemini-1.5-flash"  # Chat model (no "models/" prefix)
+    GEMINI_EMBEDDING_MODEL: str = "models/text-embedding-004"  # Embedding model (with "models/" prefix)
+    GEMINI_MAX_TOKENS: int = 8192  # Gemini supports up to 8192 tokens
     GEMINI_TEMPERATURE: float = 0.7
     
     # RAG Settings
