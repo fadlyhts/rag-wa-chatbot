@@ -76,6 +76,18 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     message_id = data.get("id") or data.get("messageId", "")
     from_me = data.get("fromMe", False)
     
+    # Check for document/media attachments
+    has_media = data.get("hasMedia", False)
+    media_url = None
+    media_type = None
+    
+    if has_media:
+        # WAHA includes media information in the payload
+        media_url = data.get("mediaUrl") or data.get("media", {}).get("url")
+        media_type = data.get("mimetype") or data.get("media", {}).get("mimetype")
+        
+        logger.info(f"[{request_id}] Message has media: type={media_type}, url={media_url}")
+    
     # FILTER 1: Ignore messages sent by the bot itself
     if from_me:
         logger.info(f"[{request_id}] Ignoring message from bot itself (fromMe=True)")

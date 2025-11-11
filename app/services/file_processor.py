@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import hashlib
+import uuid
 
 from sqlalchemy.orm import Session
 
@@ -117,9 +118,8 @@ class FileProcessor:
             embeddings = await self.embeddings.generate_embeddings_batch_async(chunks)
             logger.info(f"Generated {len(embeddings)} embeddings")
             
-            # Generate unique IDs for chunks
-            doc_hash = hashlib.md5(f"{doc.id}_{doc.title}".encode()).hexdigest()[:8]
-            chunk_ids = [f"doc_{doc.id}_{doc_hash}_chunk_{i}" for i in range(len(chunks))]
+            # Generate unique UUID IDs for chunks (Qdrant requires UUID or integer)
+            chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
             
             # Prepare payloads for Qdrant
             payloads = []
