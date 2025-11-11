@@ -11,9 +11,15 @@ from sqlalchemy.orm import Session
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.rag.document_processor import document_processor
-from app.rag.embeddings import embeddings_service
+from app.rag.config import rag_config
 from app.rag.vector_store import vector_store
 from app.database.session import SessionLocal
+
+# Import embeddings service based on provider
+if rag_config.ai_provider == "gemini":
+    from app.rag.embeddings_gemini import gemini_embeddings_service as embeddings_service
+else:  # default to openai
+    from app.rag.embeddings import embeddings_service
 
 logger = logging.getLogger(__name__)
 
