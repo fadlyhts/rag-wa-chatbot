@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.api.endpoints import webhook, health, messages, stats, test
+from app.api.endpoints import webhook, health, messages, stats, test, auth, documents, vector_db, dashboard
+from app.api.endpoints import settings as settings_router
 from app.database.session import engine
 from app.database.base import Base
 from app.config import settings
@@ -82,7 +83,12 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",   # Alternative dev port
+        "https://*.easypanel.host", # Production (wildcard)
+        "*"  # Allow all for now
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,6 +100,13 @@ app.include_router(health.router, tags=["health"])
 app.include_router(messages.router, prefix="/api", tags=["messages"])
 app.include_router(stats.router, prefix="/api", tags=["stats"])
 app.include_router(test.router, prefix="/api", tags=["test"])
+
+# Admin panel routers (comprehensive with authentication)
+app.include_router(auth.router, prefix="/api", tags=["authentication"])
+app.include_router(documents.router, prefix="/api", tags=["documents"])
+app.include_router(vector_db.router, prefix="/api", tags=["vector-database"])
+app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
+app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 
 
 # Exception handlers
