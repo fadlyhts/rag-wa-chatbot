@@ -232,6 +232,51 @@ class GeminiGenerator:
         except Exception as e:
             logger.error(f"Gemini streaming error: {e}")
             raise
+    
+    def format_for_whatsapp(self, text: str, max_length: int = 4096) -> List[str]:
+        """
+        Format response text for WhatsApp
+        Splits long messages into multiple parts if needed
+        
+        Args:
+            text: Response text to format
+            max_length: Maximum length per message (WhatsApp limit is 4096)
+            
+        Returns:
+            List of message strings
+        """
+        if len(text) <= max_length:
+            return [text]
+        
+        # Split into chunks
+        messages = []
+        current_message = ""
+        
+        # Split by paragraphs first
+        paragraphs = text.split('\n\n')
+        
+        for para in paragraphs:
+            if len(current_message) + len(para) + 2 <= max_length:
+                current_message += para + '\n\n'
+            else:
+                if current_message:
+                    messages.append(current_message.strip())
+                    current_message = para + '\n\n'
+                else:
+                    # Paragraph itself is too long, split by sentences
+                    sentences = para.split('. ')
+                    for sentence in sentences:
+                        if len(current_message) + len(sentence) + 2 <= max_length:
+                            current_message += sentence + '. '
+                        else:
+                            if current_message:
+                                messages.append(current_message.strip())
+                            current_message = sentence + '. '
+        
+        if current_message:
+            messages.append(current_message.strip())
+        
+        return messages if messages else [text[:max_length]]
 
 
 # Global Gemini generator instance

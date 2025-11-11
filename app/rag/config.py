@@ -29,7 +29,10 @@ class RAGConfig:
     qdrant_url: str = settings.QDRANT_URL
     qdrant_api_key: str = settings.QDRANT_API_KEY
     qdrant_collection: str = settings.QDRANT_COLLECTION
-    vector_size: int = 1536  # OpenAI text-embedding-3-small dimension
+    # Vector size depends on embedding model:
+    # - OpenAI text-embedding-3-small: 1536
+    # - Gemini text-embedding-004: 768
+    vector_size: int = 768 if settings.AI_PROVIDER == "gemini" else 1536
     
     # RAG Settings
     chunk_size: int = settings.RAG_CHUNK_SIZE
