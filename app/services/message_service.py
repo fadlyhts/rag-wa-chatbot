@@ -6,6 +6,8 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from datetime import datetime
 import logging
+import time
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -141,3 +143,88 @@ def get_conversation_history(
     
     # Return in chronological order
     return list(reversed(messages))
+
+
+async def generate_ai_response(
+    user_message: str,
+    conversation_id: int,
+    user_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """
+    Generate AI response using RAG pipeline
+    
+    Args:
+        user_message: User's message text
+        conversation_id: Conversation ID
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Dict with response text and metadata
+    """
+    try:
+        # Import RAG here to avoid circular imports
+        from app.rag import generate_rag_response_async
+        
+        # Get conversation history
+        history = get_conversation_history(conversation_id, limit=5, db=db)
+        
+        # Format history for RAG
+        formatted_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in history
+        ]
+        
+        # Call RAG pipeline
+        logger.info(f"Generating RAG response for user {user_id}")
+        start_time = time.time()
+        
+        response = await generate_rag_response_async(
+            query=user_message,
+            conversation_history=formatted_history,
+            user_id=user_id
+        )
+        
+        response_time = int((time.time() - start_time) * 1000)
+        logger.info(f"RAG response generated in {response_time}ms for user {user_id}")
+        
+        # Save assistant response with metadata
+        save_assistant_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            content=response['text'],
+            rag_context={
+                'retrieved_docs': response['sources'],
+                'relevance_scores': response['scores'],
+                'docs_retrieved': response['docs_retrieved']
+            },
+            llm_tokens=response['tokens'],
+            response_time_ms=response.get('total_time_ms', response_time),
+            db=db
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error generating AI response: {e}", exc_info=True)
+        
+        # Fallback to simple response
+        fallback_text = (
+            "I apologize, but I'm having trouble processing your request right now. "
+            "Please try again in a moment. 😊"
+        )
+        
+        # Still save the fallback response
+        save_assistant_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            content=fallback_text,
+            rag_context={'error': str(e)},
+            db=db
+        )
+        
+        return {
+            'text': fallback_text,
+            'error': str(e)
+        }
