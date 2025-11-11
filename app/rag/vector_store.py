@@ -20,10 +20,18 @@ class VectorStore:
     """Vector store using Qdrant"""
     
     def __init__(self):
-        self.client = self._init_client()
+        self.client = None
         self.collection_name = rag_config.qdrant_collection
         self.vector_size = rag_config.vector_size
-        self._ensure_collection()
+        self._initialized = False
+        # Lazy initialization - connect on first use
+        try:
+            self.client = self._init_client()
+            self._ensure_collection()
+            self._initialized = True
+        except Exception as e:
+            logger.warning(f"Qdrant not available at startup: {e}")
+            logger.warning("Vector store will be initialized on first use")
     
     def _init_client(self) -> QdrantClient:
         """Initialize Qdrant client"""
@@ -42,6 +50,17 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}")
             raise
+    
+    def _ensure_initialized(self):
+        """Ensure client is initialized before use"""
+        if not self._initialized and self.client is None:
+            try:
+                self.client = self._init_client()
+                self._ensure_collection()
+                self._initialized = True
+            except Exception as e:
+                logger.error(f"Failed to initialize Qdrant: {e}")
+                raise Exception("Qdrant vector store is not available")
     
     def _ensure_collection(self):
         """Ensure collection exists, create if not"""
@@ -69,6 +88,8 @@ class VectorStore:
     def health_check(self) -> bool:
         """Check if Qdrant is healthy"""
         try:
+            if self.client is None:
+                self._ensure_initialized()
             self.client.get_collections()
             return True
         except Exception as e:
@@ -93,6 +114,8 @@ class VectorStore:
             True if successful
         """
         try:
+            self._ensure_initialized()
+            
             points = [
                 PointStruct(
                     id=doc_id,
@@ -134,6 +157,8 @@ class VectorStore:
             List of search results with scores and payloads
         """
         try:
+            self._ensure_initialized()
+            
             limit = limit or rag_config.top_k
             score_threshold = score_threshold or rag_config.min_score
             
@@ -186,6 +211,8 @@ class VectorStore:
             True if successful
         """
         try:
+            self._ensure_initialized()
+            
             self.client.delete(
                 collection_name=self.collection_name,
                 points_selector=ids
@@ -201,6 +228,8 @@ class VectorStore:
     def get_collection_info(self) -> Dict[str, Any]:
         """Get collection information"""
         try:
+            self._ensure_initialized()
+            
             collection = self.client.get_collection(self.collection_name)
             return {
                 "name": self.collection_name,
@@ -215,6 +244,8 @@ class VectorStore:
     def delete_collection(self) -> bool:
         """Delete the entire collection (use with caution!)"""
         try:
+            self._ensure_initialized()
+            
             self.client.delete_collection(self.collection_name)
             logger.warning(f"Deleted collection: {self.collection_name}")
             return True
