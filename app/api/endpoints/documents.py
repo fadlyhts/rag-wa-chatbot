@@ -36,6 +36,43 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+@router.get("/documents/categories", response_model=List[DocumentCategoryResponse])
+async def list_categories(
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    List all document categories
+    """
+    try:
+        categories = document_service.get_categories(db)
+        return categories
+    except Exception as e:
+        logger.error(f"Error listing categories: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list categories: {str(e)}")
+
+
+@router.post("/documents/categories", response_model=DocumentCategoryResponse)
+async def create_category(
+    category_data: DocumentCategoryCreate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Create a new document category
+    """
+    try:
+        category = document_service.create_category(
+            db=db,
+            name=category_data.name,
+            description=category_data.description
+        )
+        return category
+    except Exception as e:
+        logger.error(f"Error creating category: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
+
+
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
     page: int = Query(1, ge=1),
@@ -443,43 +480,6 @@ async def bulk_delete_documents(
     except Exception as e:
         logger.error(f"Bulk delete error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Bulk delete failed: {str(e)}")
-
-
-@router.get("/documents/categories", response_model=List[DocumentCategoryResponse])
-async def list_categories(
-    db: Session = Depends(get_db),
-    current_admin: Admin = Depends(get_current_active_admin)
-):
-    """
-    List all document categories
-    """
-    try:
-        categories = document_service.get_categories(db)
-        return categories
-    except Exception as e:
-        logger.error(f"Error listing categories: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list categories: {str(e)}")
-
-
-@router.post("/documents/categories", response_model=DocumentCategoryResponse)
-async def create_category(
-    category_data: DocumentCategoryCreate,
-    db: Session = Depends(get_db),
-    current_admin: Admin = Depends(get_current_active_admin)
-):
-    """
-    Create a new document category
-    """
-    try:
-        category = document_service.create_category(
-            db=db,
-            name=category_data.name,
-            description=category_data.description
-        )
-        return category
-    except Exception as e:
-        logger.error(f"Error creating category: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
 
 
 @router.get("/documents/{document_id}/usage-stats", response_model=DocumentUsageStats)
