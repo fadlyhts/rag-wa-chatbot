@@ -11,15 +11,9 @@ from sqlalchemy.orm import Session
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.rag.document_processor import document_processor
-from app.rag.config import rag_config
 from app.rag.vector_store import vector_store
+from app.rag.factory import get_embeddings_service
 from app.database.session import SessionLocal
-
-# Import embeddings service based on provider
-if rag_config.ai_provider == "gemini":
-    from app.rag.embeddings_gemini import gemini_embeddings_service as embeddings_service
-else:  # default to openai
-    from app.rag.embeddings import embeddings_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +23,12 @@ class FileProcessor:
     
     def __init__(self):
         self.document_processor = document_processor
-        self.embeddings = embeddings_service
         self.vector_store = vector_store
+    
+    @property
+    def embeddings(self):
+        """Get embeddings service lazily"""
+        return get_embeddings_service()
     
     def create_document_record(
         self,
