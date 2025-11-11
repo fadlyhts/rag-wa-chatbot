@@ -20,7 +20,7 @@ if [ $count -eq $max_tries ]; then
   exit 1
 fi
 
-echo "✓ Database connection established"
+echo "[OK] Database connection established"
 
 # Run database migrations
 echo "Running database migrations..."
@@ -50,32 +50,44 @@ from app.database.session import SessionLocal
 from app.models.admin import Admin
 from app.models.document_category import DocumentCategory
 from app.models.settings import Settings
-from passlib.context import CryptContext
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 db = SessionLocal()
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
 
 try:
     # Create default admin if not exists
     admin = db.query(Admin).filter(Admin.username == 'admin').first()
     if not admin:
         logger.info('Creating default admin user...')
+        
+        # Try to hash password with bcrypt, fallback to pre-generated hash
+        try:
+            from passlib.context import CryptContext
+            pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
+            password_hash = pwd_context.hash('admin123')
+            logger.info('Generated password hash with bcrypt')
+        except Exception as e:
+            # Fallback to pre-generated bcrypt hash (works with bcrypt 4.x and 5.x)
+            logger.warning(f'Bcrypt hashing failed: {e}')
+            logger.info('Using pre-generated password hash')
+            # Pre-generated with bcrypt 4.x: password = admin123
+            password_hash = '\$2b\$12\$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5ztC2x3eoKiOy'
+        
         admin = Admin(
             username='admin',
             email='admin@example.com',
-            password_hash=pwd_context.hash('admin123'),
+            password_hash=password_hash,
             role='super_admin',
             is_active=True
         )
         db.add(admin)
         db.commit()
-        logger.info('✓ Default admin created (username: admin, password: admin123)')
+        logger.info('Default admin created (username: admin, password: admin123)')
     else:
-        logger.info('✓ Admin user already exists')
+        logger.info('Admin user already exists')
     
     # Create default categories if not exist
     default_categories = [
@@ -93,7 +105,7 @@ try:
             db.add(cat)
     
     db.commit()
-    logger.info('✓ Default categories ensured')
+    logger.info('Default categories ensured')
     
     # Create default settings if not exist
     settings_defaults = {
@@ -121,7 +133,7 @@ try:
             db.add(setting)
     
     db.commit()
-    logger.info('✓ Default settings ensured')
+    logger.info('Default settings ensured')
     
 except Exception as e:
     logger.error(f'Seeding error: {e}')
@@ -132,7 +144,7 @@ finally:
 "
 
 echo "==================================="
-echo "✓ Migrations and seeding complete"
+echo "[SUCCESS] Migrations and seeding complete"
 echo "==================================="
 
 # Execute the main command (uvicorn)

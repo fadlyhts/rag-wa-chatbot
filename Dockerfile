@@ -15,7 +15,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Pin bcrypt to 4.x to ensure compatibility with passlib
+RUN pip install --no-cache-dir "bcrypt>=4.0.1,<5.0.0" && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
