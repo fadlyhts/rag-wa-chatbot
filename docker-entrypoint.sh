@@ -28,16 +28,86 @@ python -c "
 from app.database.session import engine
 from app.database.base import Base
 from app.models import *
+from sqlalchemy import text
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 try:
-    # Create all tables
+    # Create new tables (admins, categories, chunks, settings)
     logger.info('Creating/updating database tables...')
     Base.metadata.create_all(bind=engine)
-    logger.info('✓ Database tables created/updated successfully')
+    logger.info('Database tables created/updated successfully')
+    
+    # Alter existing documents table to add new columns
+    logger.info('Altering documents table to add new columns...')
+    with engine.connect() as conn:
+        # Check if category_id column exists
+        result = conn.execute(text('''
+            SELECT COUNT(*) as count FROM information_schema.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'documents' 
+            AND COLUMN_NAME = 'category_id'
+        '''))
+        column_exists = result.fetchone()[0] > 0
+        
+        if not column_exists:
+            logger.info('Adding new columns to documents table...')
+            # Add columns one by one to handle MySQL limitations
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN category_id INT NULL'))
+                logger.info('Added category_id column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN file_path VARCHAR(500) NULL'))
+                logger.info('Added file_path column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN file_size INT NULL'))
+                logger.info('Added file_size column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN file_type VARCHAR(50) NULL'))
+                logger.info('Added file_type column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN chunks_count INT DEFAULT 0 NOT NULL'))
+                logger.info('Added chunks_count column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN processed_at TIMESTAMP NULL'))
+                logger.info('Added processed_at column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN failed_reason TEXT NULL'))
+                logger.info('Added failed_reason column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            try:
+                conn.execute(text('ALTER TABLE documents ADD COLUMN upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL'))
+                logger.info('Added upload_date column')
+            except Exception as e:
+                logger.debug(f'Column might exist: {e}')
+            
+            conn.commit()
+            logger.info('Documents table columns added successfully')
+        else:
+            logger.info('Documents table already has new columns')
+        
 except Exception as e:
     logger.error(f'Migration error: {e}')
     raise
