@@ -14,9 +14,17 @@ class GeminiGenerator:
     def __init__(self):
         # Configure Gemini
         genai.configure(api_key=rag_config.google_api_key)
-        self.model_name = rag_config.gemini_model
+        
+        # Ensure model name doesn't have "models/" prefix
+        model_name = rag_config.gemini_model
+        if model_name.startswith("models/"):
+            model_name = model_name.replace("models/", "")
+        self.model_name = model_name
+        
         self.max_tokens = rag_config.gemini_max_tokens
         self.temperature = rag_config.gemini_temperature
+        
+        logger.info(f"Initializing Gemini generator with model: {self.model_name}")
         
         # Initialize model
         generation_config = genai.GenerationConfig(

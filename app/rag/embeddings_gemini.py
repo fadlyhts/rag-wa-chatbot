@@ -17,7 +17,14 @@ class GeminiEmbeddingsService:
     def __init__(self):
         # Configure Gemini
         genai.configure(api_key=rag_config.google_api_key)
-        self.model_name = rag_config.gemini_embedding_model
+        
+        # Ensure embedding model has "models/" prefix
+        model_name = rag_config.gemini_embedding_model
+        if not model_name.startswith("models/"):
+            model_name = f"models/{model_name}"
+        self.model_name = model_name
+        
+        logger.info(f"Initializing Gemini embeddings with model: {self.model_name}")
         
         # Redis cache for embeddings
         self.cache_enabled = rag_config.enable_cache

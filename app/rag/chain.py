@@ -101,7 +101,8 @@ class RAGChain:
             logger.info(f"[User {user_id}] Generated response in {generation_time:.2f}s")
             
             # Step 7: Format for WhatsApp
-            response_text = llm_response['text']
+            # Handle both OpenAI ('text') and Gemini ('content') formats
+            response_text = llm_response.get('content') or llm_response.get('text', '')
             formatted_messages = self.generator.format_for_whatsapp(response_text)
             
             # Calculate total time
@@ -218,7 +219,8 @@ class RAGChain:
             logger.info(f"[User {user_id}] Generated response in {generation_time:.2f}s")
             
             # Step 7: Format for WhatsApp
-            response_text = llm_response['text']
+            # Handle both OpenAI ('text') and Gemini ('content') formats
+            response_text = llm_response.get('content') or llm_response.get('text', '')
             formatted_messages = self.generator.format_for_whatsapp(response_text)
             
             # Calculate total time
