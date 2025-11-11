@@ -4,7 +4,12 @@ from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.schemas.webhook import WebhookPayload, WebhookResponse
 from app.database.session import get_db
-from app.services.message_service import get_or_create_user, get_or_create_conversation, save_user_message
+from app.services.message_service import (
+    get_or_create_user,
+    get_or_create_conversation,
+    save_user_message,
+    generate_ai_response
+)
 from app.services.waha_client import WAHAClient
 from app.security.rate_limiter import RateLimiter
 from app.config import settings
@@ -206,53 +211,66 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
     )
 
 
-def send_auto_reply(phone: str, user_message: str, request_id: str):
+async def send_auto_reply(phone: str, user_message: str, request_id: str):
     """
-    Send auto-reply to user
-    Later this will be replaced with RAG-powered responses
+    Send AI-powered auto-reply using RAG system
     """
+    from app.database.session import get_db
+    
     try:
-        logger.info(f"[{request_id}] Starting auto-reply to {phone}")
+        logger.info(f"[{request_id}] Starting AI reply to {phone}")
         
-        # Initialize WAHA client
-        waha = WAHAClient(session="default")
-        logger.info(f"[{request_id}] WAHA client initialized")
+        # Get database session
+        db = next(get_db())
         
-        # Generate simple response (will be replaced with RAG)
-        reply_text = generate_simple_response(user_message)
-        logger.info(f"[{request_id}] Generated reply: {reply_text[:50]}...")
-        
-        # Send message - phone should be clean number without @c.us
-        # The send_message method will add @c.us suffix
-        logger.info(f"[{request_id}] Sending message to {phone} (will format as {phone}@c.us)")
-        result = waha.send_message(to=phone, text=reply_text)
-        
-        logger.info(f"[{request_id}] Auto-reply sent successfully to {phone}. Result: {result}")
-        return result
+        try:
+            # Get user and conversation
+            user = get_or_create_user(phone, db)
+            conversation = get_or_create_conversation(user.id, db)
+            
+            # Generate AI response using RAG
+            logger.info(f"[{request_id}] Generating AI response with RAG")
+            response = await generate_ai_response(
+                user_message=user_message,
+                conversation_id=conversation.id,
+                user_id=user.id,
+                db=db
+            )
+            
+            reply_text = response['text']
+            logger.info(f"[{request_id}] AI response generated: {reply_text[:100]}...")
+            
+            # Initialize WAHA client
+            waha = WAHAClient(session="default")
+            
+            # Send message via WAHA
+            logger.info(f"[{request_id}] Sending message to {phone}")
+            result = waha.send_message(to=phone, text=reply_text)
+            
+            logger.info(
+                f"[{request_id}] AI reply sent successfully. "
+                f"Tokens: {response.get('tokens', 0)}, "
+                f"Docs: {response.get('docs_retrieved', 0)}, "
+                f"Time: {response.get('total_time_ms', 0)}ms"
+            )
+            return result
+            
+        finally:
+            db.close()
         
     except Exception as e:
-        logger.error(f"[{request_id}] Error sending auto-reply: {str(e)}", exc_info=True)
+        logger.error(f"[{request_id}] Error sending AI reply: {str(e)}", exc_info=True)
 
 
+# Keyword-based fallback (kept for emergency use only)
 def generate_simple_response(user_message: str) -> str:
     """
-    Generate simple response based on user message
-    TODO: Replace with RAG pipeline
+    Simple keyword-based response (fallback only)
+    Main responses now use RAG pipeline
     """
     message_lower = user_message.lower()
     
-    # Simple keyword-based responses
     if any(word in message_lower for word in ["hello", "hi", "hey", "halo"]):
-        return "Hello! 👋 Thank you for contacting us. I'm your AI assistant. How can I help you today?"
+        return "Hello! 👋 I'm your AI assistant. How can I help you today?"
     
-    elif any(word in message_lower for word in ["help", "bantuan"]):
-        return "I'm here to help! You can ask me about:\n• Business hours\n• Products and services\n• Order status\n• General inquiries\n\nWhat would you like to know?"
-    
-    elif any(word in message_lower for word in ["hours", "jam", "buka"]):
-        return "Our business hours are:\n📅 Monday - Friday: 9:00 AM - 6:00 PM\n📅 Saturday: 9:00 AM - 3:00 PM\n📅 Sunday: Closed\n\nHow else can I assist you?"
-    
-    elif any(word in message_lower for word in ["thank", "thanks", "terima kasih"]):
-        return "You're welcome! 😊 Is there anything else I can help you with?"
-    
-    else:
-        return f"Thank you for your message! I've received: \"{user_message[:50]}...\"\n\nI'm currently in demo mode. Soon I'll be powered by AI to give you intelligent responses! 🤖\n\nHow can I assist you further?"
+    return "Thank you for your message! Our AI system is processing your request. Please wait a moment. 😊"
