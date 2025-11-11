@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    OPENAI_MAX_TOKENS: int = 500
+    OPENAI_TEMPERATURE: float = 0.7
+    
+    # RAG Settings
+    RAG_CHUNK_SIZE: int = 512
+    RAG_CHUNK_OVERLAP: int = 50
+    RAG_TOP_K: int = 5
+    RAG_MIN_SCORE: float = 0.7
+    RAG_ENABLE_CACHE: bool = True
     
     # WAHA
     WAHA_API_URL: str = "http://localhost:3000"
