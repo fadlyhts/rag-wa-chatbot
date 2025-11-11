@@ -2,9 +2,9 @@
 
 from typing import List, Dict, Any, Optional
 import logging
-from app.rag.embeddings import embeddings_service
 from app.rag.vector_store import vector_store
 from app.rag.config import rag_config
+from app.rag.factory import get_embeddings_service
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +13,14 @@ class Retriever:
     """Retriever for semantic search"""
     
     def __init__(self):
-        self.embeddings = embeddings_service
         self.vector_store = vector_store
         self.top_k = rag_config.top_k
         self.min_score = rag_config.min_score
+    
+    @property
+    def embeddings(self):
+        """Get embeddings service lazily"""
+        return get_embeddings_service()
     
     def retrieve(
         self,
