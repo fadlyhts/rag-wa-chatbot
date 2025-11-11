@@ -30,12 +30,22 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str = ""
     QDRANT_COLLECTION: str = "documents"
     
+    # AI Model Configuration
+    AI_PROVIDER: str = "gemini"  # "openai" or "gemini"
+    
     # OpenAI
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MAX_TOKENS: int = 500
     OPENAI_TEMPERATURE: float = 0.7
+    
+    # Gemini
+    GOOGLE_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_EMBEDDING_MODEL: str = "models/text-embedding-004"
+    GEMINI_MAX_TOKENS: int = 500
+    GEMINI_TEMPERATURE: float = 0.7
     
     # RAG Settings
     RAG_CHUNK_SIZE: int = 512

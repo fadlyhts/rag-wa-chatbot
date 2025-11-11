@@ -8,12 +8,22 @@ from dataclasses import dataclass
 class RAGConfig:
     """Configuration for RAG system"""
     
+    # AI Provider Selection
+    ai_provider: str = settings.AI_PROVIDER  # "openai" or "gemini"
+    
     # OpenAI Settings
     openai_api_key: str = settings.OPENAI_API_KEY
     llm_model: str = settings.OPENAI_MODEL
     embedding_model: str = settings.OPENAI_EMBEDDING_MODEL
     max_tokens: int = settings.OPENAI_MAX_TOKENS
     temperature: float = settings.OPENAI_TEMPERATURE
+    
+    # Gemini Settings
+    google_api_key: str = settings.GOOGLE_API_KEY
+    gemini_model: str = settings.GEMINI_MODEL
+    gemini_embedding_model: str = settings.GEMINI_EMBEDDING_MODEL
+    gemini_max_tokens: int = settings.GEMINI_MAX_TOKENS
+    gemini_temperature: float = settings.GEMINI_TEMPERATURE
     
     # Qdrant Settings
     qdrant_url: str = settings.QDRANT_URL
