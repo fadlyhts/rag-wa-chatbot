@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import time
 import logging
 from app.rag.retriever import retriever
-from app.rag.generator import generator
+from app.rag.factory import get_generator_service
 from app.rag.prompt_templates import (
     format_conversation_history,
     format_context,
@@ -20,7 +20,11 @@ class RAGChain:
     
     def __init__(self):
         self.retriever = retriever
-        self.generator = generator
+    
+    @property
+    def generator(self):
+        """Get generator service lazily"""
+        return get_generator_service()
     
     def _preprocess_query(self, query: str) -> str:
         """Preprocess user query"""
