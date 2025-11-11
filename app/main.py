@@ -35,6 +35,22 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     
+    # Log AI provider configuration
+    from app.rag.config import rag_config
+    logger.info("="*60)
+    logger.info(f"🤖 AI PROVIDER: {rag_config.ai_provider.upper()}")
+    if rag_config.ai_provider.lower() == "gemini":
+        logger.info(f"📦 Model: {rag_config.gemini_model}")
+        logger.info(f"🔢 Embedding: {rag_config.gemini_embedding_model}")
+        api_key = rag_config.google_api_key
+        logger.info(f"🔑 API Key: {api_key[:20]}..." if api_key else "❌ NOT SET")
+    else:
+        logger.info(f"📦 Model: {rag_config.llm_model}")
+        logger.info(f"🔢 Embedding: {rag_config.embedding_model}")
+        api_key = rag_config.openai_api_key
+        logger.info(f"🔑 API Key: {api_key[:20]}..." if api_key else "❌ NOT SET")
+    logger.info("="*60)
+    
     # Create database tables
     try:
         Base.metadata.create_all(bind=engine)
