@@ -232,6 +232,13 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
     try:
         logger.info(f"[{request_id}] Starting AI reply to {phone}")
         
+        # Initialize WAHA client
+        waha = WAHAClient(session="default")
+        
+        # Send typing indicator
+        waha.send_typing(to=phone)
+        logger.info(f"[{request_id}] Typing indicator sent")
+        
         # Get database session
         db = next(get_db())
         
@@ -251,9 +258,6 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
             
             reply_text = response['text']
             logger.info(f"[{request_id}] AI response generated: {reply_text[:100]}...")
-            
-            # Initialize WAHA client
-            waha = WAHAClient(session="default")
             
             # Send message via WAHA
             logger.info(f"[{request_id}] Sending message to {phone}")
