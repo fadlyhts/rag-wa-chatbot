@@ -101,6 +101,7 @@ class WAHAClient:
     def send_typing(self, to: str, chat_id: str = None) -> dict:
         """
         Send typing indicator (sedang mengetik...)
+        WAHA API: POST /api/{session}/presence
         
         Args:
             to: Phone number (e.g., "6281234567890")
@@ -110,7 +111,6 @@ class WAHAClient:
             chat_id = f"{to}@c.us"
         
         payload = {
-            "session": self.session,
             "chatId": chat_id,
             "presence": "typing"
         }
@@ -122,7 +122,7 @@ class WAHAClient:
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
-                    f"{self.base_url}/api/sendPresence",
+                    f"{self.base_url}/api/{self.session}/presence",
                     json=payload,
                     headers=headers
                 )
@@ -131,4 +131,6 @@ class WAHAClient:
                 return response.json()
         except httpx.HTTPError as e:
             logger.warning(f"Failed to send typing: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.warning(f"Response: {e.response.text}")
             return {"status": "error"}
