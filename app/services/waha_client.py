@@ -128,7 +128,12 @@ class WAHAClient:
                 )
                 response.raise_for_status()
                 logger.info(f"Typing indicator sent to {to}")
-                return response.json()
+                
+                # Presence endpoint returns 201 with empty body
+                if response.status_code == 201 and not response.text:
+                    return {"status": "ok", "message": "Typing indicator sent"}
+                
+                return response.json() if response.text else {"status": "ok"}
         except httpx.HTTPError as e:
             logger.warning(f"Failed to send typing: {str(e)}")
             if hasattr(e, 'response') and e.response is not None:
