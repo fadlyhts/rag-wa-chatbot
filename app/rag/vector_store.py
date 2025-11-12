@@ -21,8 +21,6 @@ class VectorStore:
     
     def __init__(self):
         self.client = None
-        self.collection_name = rag_config.qdrant_collection
-        self.vector_size = rag_config.vector_size
         self._initialized = False
         # Lazy initialization - connect on first use
         try:
@@ -32,6 +30,16 @@ class VectorStore:
         except Exception as e:
             logger.warning(f"Qdrant not available at startup: {e}")
             logger.warning("Vector store will be initialized on first use")
+    
+    @property
+    def collection_name(self) -> str:
+        """Get collection name dynamically based on current config"""
+        return rag_config.qdrant_collection
+    
+    @property
+    def vector_size(self) -> int:
+        """Get vector size dynamically based on current config"""
+        return rag_config.vector_size
     
     def _init_client(self) -> QdrantClient:
         """Initialize Qdrant client"""

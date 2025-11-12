@@ -41,19 +41,26 @@ async def list_collections(
     List all Qdrant collections
     
     Returns collection names and vector counts
+    Shows active collection based on AI_PROVIDER setting
     """
     try:
+        from app.rag.config import rag_config
+        
         collections = vector_store.client.get_collections().collections
+        active_collection = rag_config.qdrant_collection
         
         collections_info = []
         for collection in collections:
             try:
                 info = vector_store.client.get_collection(collection.name)
+                is_active = collection.name == active_collection
                 collections_info.append({
                     "name": collection.name,
                     "vectors_count": info.vectors_count,
                     "points_count": info.points_count,
-                    "status": info.status
+                    "status": info.status,
+                    "is_active": is_active,
+                    "vector_size": info.config.params.vectors.size if hasattr(info.config, 'params') else None
                 })
             except Exception as e:
                 logger.error(f"Error getting info for collection {collection.name}: {e}")
@@ -61,13 +68,19 @@ async def list_collections(
                     "name": collection.name,
                     "vectors_count": 0,
                     "points_count": 0,
-                    "status": "error"
+                    "status": "error",
+                    "is_active": False,
+                    "vector_size": None
                 })
         
         return {
             "success": True,
+            "active_collection": active_collection,
+            "active_provider": rag_config.ai_provider,
+            "expected_vector_size": rag_config.vector_size,
             "collections": collections_info,
-            "total": len(collections_info)
+            "total": len(collections_info),
+            "info": "Collections are automatically created per AI provider (documents_openai, documents_gemini)"
         }
         
     except Exception as e:

@@ -28,7 +28,16 @@ class RAGConfig:
     # Qdrant Settings
     qdrant_url: str = settings.QDRANT_URL
     qdrant_api_key: str = settings.QDRANT_API_KEY
-    qdrant_collection: str = settings.QDRANT_COLLECTION
+    
+    # Dynamic collection name based on AI provider to avoid dimension conflicts
+    # This allows switching between providers without deleting data
+    @property
+    def qdrant_collection(self) -> str:
+        """Get collection name based on AI provider"""
+        base_name = settings.QDRANT_COLLECTION
+        # Append provider suffix to collection name
+        return f"{base_name}_{self.ai_provider}"
+    
     # Vector size depends on embedding model:
     # - OpenAI text-embedding-3-small: 1536
     # - Gemini text-embedding-004: 768
