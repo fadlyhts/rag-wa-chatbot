@@ -244,8 +244,12 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
         
         try:
             # Get user and conversation
+            logger.info(f"[{request_id}] Getting user from database")
             user = get_or_create_user(phone, db)
+            logger.info(f"[{request_id}] User ID: {user.id}")
+            
             conversation = get_or_create_conversation(user.id, db)
+            logger.info(f"[{request_id}] Conversation ID: {conversation.id}")
             
             # Generate AI response using RAG
             logger.info(f"[{request_id}] Generating AI response with RAG")
@@ -262,6 +266,7 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
             # Send message via WAHA
             logger.info(f"[{request_id}] Sending message to {phone}")
             result = waha.send_message(to=phone, text=reply_text)
+            logger.info(f"[{request_id}] WAHA send result: {result}")
             
             logger.info(
                 f"[{request_id}] AI reply sent successfully. "
@@ -276,6 +281,15 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
         
     except Exception as e:
         logger.error(f"[{request_id}] Error sending AI reply: {str(e)}", exc_info=True)
+        
+        # Send error message to user
+        try:
+            waha = WAHAClient(session="default")
+            error_msg = "Maaf, saya mengalami kesulitan memproses permintaan Anda. Silakan coba lagi dalam beberapa saat. 😊"
+            waha.send_message(to=phone, text=error_msg)
+            logger.info(f"[{request_id}] Error message sent to user")
+        except Exception as send_error:
+            logger.error(f"[{request_id}] Failed to send error message: {str(send_error)}")
 
 
 # Keyword-based fallback (kept for emergency use only)
