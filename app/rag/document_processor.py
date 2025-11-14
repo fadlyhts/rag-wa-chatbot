@@ -9,7 +9,13 @@ import PyPDF2
 import docx
 import tiktoken
 
-# OCR imports
+from app.rag.embeddings import embeddings_service
+from app.rag.vector_store import vector_store
+from app.rag.config import rag_config
+
+logger = logging.getLogger(__name__)
+
+# OCR imports - moved after logger initialization
 try:
     import pytesseract
     from PIL import Image
@@ -18,12 +24,6 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
     logger.warning("OCR libraries not available. Install pytesseract, Pillow, and pdf2image for OCR support.")
-
-from app.rag.embeddings import embeddings_service
-from app.rag.vector_store import vector_store
-from app.rag.config import rag_config
-
-logger = logging.getLogger(__name__)
 
 
 class DocumentProcessor:
