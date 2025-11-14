@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 import hashlib
 import uuid
+import os
 
 from sqlalchemy.orm import Session
 
