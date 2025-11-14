@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Upload directory
-UPLOAD_DIR = Path("uploads")
+# Upload directory - use absolute path for production compatibility
+UPLOAD_DIR = Path("uploads").resolve()
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 

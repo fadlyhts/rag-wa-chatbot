@@ -100,7 +100,15 @@ class FileProcessor:
             
             # Extract text from file
             try:
-                text = self.document_processor.read_file(doc.file_path)
+                # Ensure file path exists, try both absolute and relative
+                file_path = Path(doc.file_path)
+                if not file_path.exists():
+                    # Try absolute path from current directory
+                    file_path = Path.cwd() / doc.file_path
+                    if not file_path.exists():
+                        raise FileNotFoundError(f"File not found: {doc.file_path}")
+                
+                text = self.document_processor.read_file(str(file_path))
                 doc.content = text
                 db.commit()
                 logger.info(f"Extracted {len(text)} characters from {doc.title}")
