@@ -9,6 +9,16 @@ import PyPDF2
 import docx
 import tiktoken
 
+# OCR imports
+try:
+    import pytesseract
+    from PIL import Image
+    from pdf2image import convert_from_path
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    logger.warning("OCR libraries not available. Install pytesseract, Pillow, and pdf2image for OCR support.")
+
 from app.rag.embeddings import embeddings_service
 from app.rag.vector_store import vector_store
 from app.rag.config import rag_config
@@ -59,6 +69,8 @@ class DocumentProcessor:
                 return self._read_docx(file_path)
             elif extension in ['.txt', '.md']:
                 return self._read_text(file_path)
+            elif extension in ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif']:
+                return self._read_image_ocr(file_path)
             else:
                 logger.warning(f"Unsupported file type: {extension}")
                 return ""
@@ -67,12 +79,19 @@ class DocumentProcessor:
             raise
     
     def _read_pdf(self, file_path: Path) -> str:
-        """Read PDF file"""
+        """Read PDF file with OCR fallback for scanned PDFs"""
         text = ""
         with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
+                page_text = page.extract_text()
+                text += page_text + "\n"
+        
+        # If PDF has very little text, it's likely scanned - use OCR
+        if len(text.strip()) < 100 and OCR_AVAILABLE:
+            logger.info(f"PDF appears to be scanned, using OCR: {file_path}")
+            text = self._read_pdf_ocr(file_path)
+        
         return text
     
     def _read_docx(self, file_path: Path) -> str:
@@ -85,6 +104,66 @@ class DocumentProcessor:
         """Read text file"""
         with open(file_path, 'r', encoding='utf-8') as file:
             return file.read()
+    
+    def _read_image_ocr(self, file_path: Path) -> str:
+        """
+        Read image file using OCR
+        
+        Args:
+            file_path: Path to image file
+            
+        Returns:
+            Extracted text from image
+        """
+        if not OCR_AVAILABLE:
+            raise Exception("OCR libraries not installed. Please install: pip install pytesseract Pillow pdf2image")
+        
+        try:
+            logger.info(f"Performing OCR on image: {file_path}")
+            image = Image.open(file_path)
+            
+            # Perform OCR
+            text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
+            
+            logger.info(f"OCR extracted {len(text)} characters from image")
+            return text
+            
+        except Exception as e:
+            logger.error(f"OCR failed for {file_path}: {e}")
+            raise Exception(f"Failed to extract text from image: {str(e)}")
+    
+    def _read_pdf_ocr(self, file_path: Path) -> str:
+        """
+        Read scanned PDF using OCR
+        
+        Args:
+            file_path: Path to PDF file
+            
+        Returns:
+            Extracted text from scanned PDF
+        """
+        if not OCR_AVAILABLE:
+            raise Exception("OCR libraries not installed. Please install: pip install pytesseract Pillow pdf2image")
+        
+        try:
+            logger.info(f"Performing OCR on scanned PDF: {file_path}")
+            
+            # Convert PDF pages to images
+            images = convert_from_path(file_path)
+            
+            # Perform OCR on each page
+            text = ""
+            for i, image in enumerate(images, 1):
+                logger.info(f"OCR processing page {i}/{len(images)}")
+                page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
+                text += page_text + "\n\n"
+            
+            logger.info(f"OCR extracted {len(text)} characters from {len(images)} pages")
+            return text
+            
+        except Exception as e:
+            logger.error(f"OCR failed for PDF {file_path}: {e}")
+            raise Exception(f"Failed to extract text from scanned PDF: {str(e)}")
     
     def chunk_text(
         self,

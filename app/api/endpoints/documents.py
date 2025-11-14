@@ -120,18 +120,18 @@ async def upload_document(
     """
     Upload and process a document
     
-    Supports: PDF, DOCX, TXT, MD
+    Supports: PDF, DOCX, TXT, MD, Images (JPG, PNG, TIFF, BMP, GIF) for OCR
     Max size: 10MB
     
     Processing happens in background:
     1. File is saved
     2. Document record created with status='pending'
-    3. Background task processes file
+    3. Background task processes file (with OCR for images/scanned PDFs)
     4. Status updates to 'completed' or 'failed'
     """
     try:
-        # Validate file type
-        allowed_types = ['.pdf', '.docx', '.txt', '.md']
+        # Validate file type - now includes image formats for OCR
+        allowed_types = ['.pdf', '.docx', '.txt', '.md', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif']
         file_ext = Path(file.filename).suffix.lower()
         
         if file_ext not in allowed_types:
@@ -204,6 +204,7 @@ async def bulk_upload_documents(
     """
     Upload multiple documents at once
     
+    Supports: PDF, DOCX, TXT, MD, Images (JPG, PNG, TIFF, BMP, GIF) for OCR
     Each file is processed independently in background
     """
     try:
@@ -211,9 +212,9 @@ async def bulk_upload_documents(
         
         for file in files:
             try:
-                # Validate and save each file
+                # Validate and save each file - includes image formats
                 file_ext = Path(file.filename).suffix.lower()
-                if file_ext not in ['.pdf', '.docx', '.txt', '.md']:
+                if file_ext not in ['.pdf', '.docx', '.txt', '.md', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif']:
                     results.append({
                         "filename": file.filename,
                         "success": False,
