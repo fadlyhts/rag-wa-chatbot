@@ -150,15 +150,27 @@ class DocumentProcessor:
             
             # Convert PDF pages to images
             images = convert_from_path(file_path)
+            total_pages = len(images)
+            
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing")
             
             # Perform OCR on each page
             text = ""
             for i, image in enumerate(images, 1):
-                logger.info(f"OCR processing page {i}/{len(images)}")
-                page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
-                text += page_text + "\n\n"
+                try:
+                    logger.info(f"OCR processing page {i}/{total_pages}")
+                    page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
+                    text += page_text + "\n\n"
+                    
+                    # Log progress every 10 pages
+                    if i % 10 == 0:
+                        logger.info(f"OCR progress: {i}/{total_pages} pages completed, {len(text)} characters extracted so far")
+                        
+                except Exception as page_error:
+                    logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
+                    continue
             
-            logger.info(f"OCR extracted {len(text)} characters from {len(images)} pages")
+            logger.info(f"OCR completed: extracted {len(text)} characters from {total_pages} pages")
             return text
             
         except Exception as e:

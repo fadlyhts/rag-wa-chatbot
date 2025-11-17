@@ -123,9 +123,10 @@ class FileProcessor:
             chunks = self.document_processor.chunk_text(text)
             logger.info(f"Split into {len(chunks)} chunks")
             
-            # Generate embeddings
+            # Generate embeddings (with progress logging for large documents)
+            logger.info(f"Starting embedding generation for {len(chunks)} chunks...")
             embeddings = await self.embeddings.generate_embeddings_batch_async(chunks)
-            logger.info(f"Generated {len(embeddings)} embeddings")
+            logger.info(f"Successfully generated {len(embeddings)} embeddings")
             
             # Generate unique UUID IDs for chunks (Qdrant requires UUID or integer)
             chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
