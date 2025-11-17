@@ -148,11 +148,12 @@ class DocumentProcessor:
         try:
             logger.info(f"Performing OCR on scanned PDF: {file_path}")
             
-            # Convert PDF pages to images
-            images = convert_from_path(file_path)
+            # Convert PDF pages to images with lower DPI to reduce memory usage
+            # 150 DPI is good balance between quality and performance
+            images = convert_from_path(file_path, dpi=150)
             total_pages = len(images)
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing")
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 150)")
             
             # Perform OCR on each page
             text = ""
@@ -161,6 +162,10 @@ class DocumentProcessor:
                     logger.info(f"OCR processing page {i}/{total_pages}")
                     page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
                     text += page_text + "\n\n"
+                    
+                    # Free memory after each page to prevent memory buildup
+                    image.close()
+                    del image
                     
                     # Log progress every 10 pages
                     if i % 10 == 0:
