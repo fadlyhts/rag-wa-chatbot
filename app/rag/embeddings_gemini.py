@@ -137,24 +137,47 @@ class GeminiEmbeddingsService:
         
         try:
             embeddings = []
+            texts_to_generate = []
+            indices_to_generate = []
             
-            # Gemini supports batch embedding
-            for text in texts:
-                # Check cache for each text
+            # First, check cache for all texts
+            for i, text in enumerate(texts):
                 cached = self._get_from_cache(text)
                 if cached:
                     embeddings.append(cached)
                 else:
+                    embeddings.append(None)  # Placeholder
+                    texts_to_generate.append(text)
+                    indices_to_generate.append(i)
+            
+            # If we have texts to generate, use TRUE batch API (one call)
+            if texts_to_generate:
+                logger.info(f"Generating embeddings for {len(texts_to_generate)} texts (cached: {len(texts) - len(texts_to_generate)})")
+                
+                # Gemini batch API - process in chunks of 100 max
+                BATCH_SIZE = 100
+                for batch_start in range(0, len(texts_to_generate), BATCH_SIZE):
+                    batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
+                    batch_texts = texts_to_generate[batch_start:batch_end]
+                    
+                    # Single API call for the batch!
                     result = genai.embed_content(
                         model=self.model_name,
-                        content=text,
+                        content=batch_texts,  # Pass all texts at once
                         task_type="retrieval_document"
                     )
-                    embedding = result['embedding']
-                    embeddings.append(embedding)
-                    self._save_to_cache(text, embedding)
+                    
+                    # Extract embeddings and cache them
+                    batch_embeddings = result['embedding'] if isinstance(result['embedding'][0], list) else [result['embedding']]
+                    
+                    for i, embedding in enumerate(batch_embeddings):
+                        original_index = indices_to_generate[batch_start + i]
+                        embeddings[original_index] = embedding
+                        self._save_to_cache(batch_texts[i], embedding)
+                    
+                    logger.info(f"Batch {batch_start//BATCH_SIZE + 1}: Generated {len(batch_embeddings)} embeddings")
             
-            logger.info(f"Generated {len(embeddings)} Gemini embeddings in batch")
+            logger.info(f"Total: Generated {len(embeddings)} embeddings (new: {len(texts_to_generate)}, cached: {len(texts) - len(texts_to_generate)})")
             return embeddings
             
         except Exception as e:
