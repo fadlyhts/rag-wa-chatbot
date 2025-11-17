@@ -1,7 +1,7 @@
 """Document model"""
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Index, ForeignKey
-from sqlalchemy.dialects.mysql import JSON
+from sqlalchemy.dialects.mysql import JSON, LONGTEXT
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.base import Base
@@ -14,7 +14,7 @@ class Document(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(500), nullable=True)
-    content = Column(Text, nullable=False)
+    content = Column(LONGTEXT, nullable=False)  # LONGTEXT for large OCR documents (up to 4GB)
     content_type = Column(String(50), nullable=True)  # policy, faq, product, etc.
     source_url = Column(Text, nullable=True)
     doc_metadata = Column(JSON, nullable=True)
