@@ -8,7 +8,8 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.api.endpoints import webhook, health, messages, stats, test, auth, documents, vector_db, dashboard
-from app.api.endpoints import settings as settings_router, evaluation, feedback
+from app.api.endpoints import settings as settings_router
+from app.api.endpoints import evaluation, feedback
 from app.database.session import engine
 from app.database.base import Base
 from app.config import settings
