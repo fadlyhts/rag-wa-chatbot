@@ -264,27 +264,13 @@ class DocumentProcessor:
             page_number = start_page + page_idx + 1
             
             try:
-                # Set timeout for individual page OCR (30 seconds max per page)
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    raise TimeoutError(f"OCR timeout for page {page_number}")
-                
-                # Set up timeout (only on Unix systems)
-                if hasattr(signal, 'SIGALRM'):
-                    signal.signal(signal.SIGALRM, timeout_handler)
-                    signal.alarm(ocr_config.page_timeout)
-                
                 logger.debug(f"OCR processing page {page_number}")
+                # Use pytesseract's built-in timeout parameter
                 text = pytesseract.image_to_string(
                     image, 
-                    lang=ocr_config.languages, 
-                    timeout=ocr_config.page_timeout - 5
+                    lang=ocr_config.languages,
+                    timeout=ocr_config.page_timeout
                 )
-                
-                # Clear timeout
-                if hasattr(signal, 'SIGALRM'):
-                    signal.alarm(0)
                 
                 return (page_idx, text)
                 
