@@ -33,6 +33,11 @@ class Document(Base):
     failed_reason = Column(Text, nullable=True)
     upload_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     
+    # OCR Progress tracking
+    ocr_progress_current = Column(Integer, default=0, nullable=False)  # Current page being processed
+    ocr_progress_total = Column(Integer, default=0, nullable=False)    # Total pages to process
+    ocr_progress_message = Column(String(500), nullable=True)          # Current processing message
+    
     # Relationships
     category = relationship("DocumentCategory", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")

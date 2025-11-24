@@ -12,6 +12,7 @@ import tiktoken
 from app.rag.embeddings import embeddings_service
 from app.rag.vector_store import vector_store
 from app.rag.config import rag_config
+from app.rag.ocr_config import ocr_config
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +50,13 @@ class DocumentProcessor:
             # Rough estimate
             return len(text) // 4
     
-    def read_file(self, file_path: str) -> str:
+    def read_file(self, file_path: str, progress_callback=None) -> str:
         """
         Read file content based on extension
         
         Args:
             file_path: Path to file
+            progress_callback: Optional callback for progress updates during OCR
             
         Returns:
             Extracted text content
@@ -64,7 +66,7 @@ class DocumentProcessor:
         
         try:
             if extension == '.pdf':
-                return self._read_pdf(file_path)
+                return self._read_pdf(file_path, progress_callback)
             elif extension == '.docx':
                 return self._read_docx(file_path)
             elif extension in ['.txt', '.md']:
@@ -78,7 +80,7 @@ class DocumentProcessor:
             logger.error(f"Error reading file {file_path}: {e}")
             raise
     
-    def _read_pdf(self, file_path: Path) -> str:
+    def _read_pdf(self, file_path: Path, progress_callback=None) -> str:
         """Read PDF file with OCR fallback for scanned PDFs"""
         text = ""
         with open(file_path, 'rb') as file:
@@ -90,7 +92,7 @@ class DocumentProcessor:
         # If PDF has very little text, it's likely scanned - use OCR
         if len(text.strip()) < 100 and OCR_AVAILABLE:
             logger.info(f"PDF appears to be scanned, using OCR: {file_path}")
-            text = self._read_pdf_ocr(file_path)
+            text = self._read_pdf_ocr(file_path, progress_callback)
         
         return text
     
@@ -132,12 +134,13 @@ class DocumentProcessor:
             logger.error(f"OCR failed for {file_path}: {e}")
             raise Exception(f"Failed to extract text from image: {str(e)}")
     
-    def _read_pdf_ocr(self, file_path: Path) -> str:
+    def _read_pdf_ocr(self, file_path: Path, progress_callback=None) -> str:
         """
-        Read scanned PDF using OCR
+        Read scanned PDF using optimized OCR with parallel processing
         
         Args:
             file_path: Path to PDF file
+            progress_callback: Optional callback function for progress updates
             
         Returns:
             Extracted text from scanned PDF
@@ -145,42 +148,208 @@ class DocumentProcessor:
         if not OCR_AVAILABLE:
             raise Exception("OCR libraries not installed. Please install: pip install pytesseract Pillow pdf2image")
         
+        import asyncio
+        import concurrent.futures
+        import gc
+        from typing import Tuple
+        
         try:
             logger.info(f"Performing OCR on scanned PDF: {file_path}")
             
-            # Convert PDF pages to images with lower DPI to reduce memory usage
-            # 150 DPI is good balance between quality and performance
-            images = convert_from_path(file_path, dpi=150)
+            # Convert PDF pages to images with configurable DPI
+            logger.info(f"Converting PDF pages to images (DPI: {ocr_config.dpi})...")
+            images = convert_from_path(file_path, dpi=ocr_config.dpi)
             total_pages = len(images)
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 150)")
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: {ocr_config.dpi})")
             
-            # Perform OCR on each page
-            text = ""
-            for i, image in enumerate(images, 1):
-                try:
-                    logger.info(f"OCR processing page {i}/{total_pages}")
-                    page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
-                    text += page_text + "\n\n"
-                    
-                    # Free memory after each page to prevent memory buildup
-                    image.close()
-                    del image
-                    
-                    # Log progress every 10 pages
-                    if i % 10 == 0:
-                        logger.info(f"OCR progress: {i}/{total_pages} pages completed, {len(text)} characters extracted so far")
-                        
-                except Exception as page_error:
-                    logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
-                    continue
+            # Initialize progress
+            if progress_callback:
+                progress_callback(0, total_pages, "Starting OCR processing...")
             
-            logger.info(f"OCR completed: extracted {len(text)} characters from {total_pages} pages")
-            return text
+            # Process in batches to manage memory and provide progress updates
+            if total_pages <= ocr_config.batch_size_small:
+                # Small PDFs: process all at once
+                return self._process_ocr_batch(images, 0, total_pages, progress_callback)
+            else:
+                # Large PDFs: process in batches for better memory management and progress tracking
+                return self._process_ocr_in_batches(images, total_pages, progress_callback)
             
         except Exception as e:
             logger.error(f"OCR failed for PDF {file_path}: {e}")
             raise Exception(f"Failed to extract text from scanned PDF: {str(e)}")
+    
+    def _process_ocr_in_batches(self, images: list, total_pages: int, progress_callback=None) -> str:
+        """
+        Process OCR in batches with parallel processing and memory management
+        
+        Args:
+            images: List of PIL images
+            total_pages: Total number of pages
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Extracted text
+        """
+        import concurrent.futures
+        import gc
+        from typing import Tuple
+        
+        # Configure batch settings using OCR config
+        batch_size = ocr_config.get_batch_size(total_pages)
+        max_workers = ocr_config.get_worker_count(batch_size)
+        
+        logger.info(f"Processing {total_pages} pages in batches of {batch_size} with {max_workers} parallel workers")
+        
+        all_text = ""
+        processed_pages = 0
+        
+        # Process in batches
+        for batch_start in range(0, total_pages, batch_size):
+            batch_end = min(batch_start + batch_size, total_pages)
+            batch_images = images[batch_start:batch_end]
+            
+            logger.info(f"Processing batch: pages {batch_start + 1}-{batch_end} ({len(batch_images)} pages)")
+            
+            try:
+                # Process this batch in parallel
+                batch_text = self._process_ocr_batch_parallel(batch_images, batch_start, max_workers)
+                all_text += batch_text
+                
+                processed_pages += len(batch_images)
+                
+                # Log progress
+                logger.info(f"OCR progress: {processed_pages}/{total_pages} pages completed, {len(all_text)} characters extracted so far")
+                
+                # Update progress via callback
+                if progress_callback:
+                    progress_callback(processed_pages, total_pages, f"Completed batch {batch_start//batch_size + 1}, {processed_pages}/{total_pages} pages processed")
+                
+                # Free memory after each batch
+                for img in batch_images:
+                    try:
+                        img.close()
+                    except:
+                        pass
+                del batch_images
+                gc.collect()
+                
+            except Exception as batch_error:
+                logger.error(f"Failed to process batch {batch_start + 1}-{batch_end}: {batch_error}")
+                # Continue with next batch instead of failing entirely
+                processed_pages += len(batch_images)
+                continue
+        
+        logger.info(f"OCR completed: extracted {len(all_text)} characters from {total_pages} pages")
+        return all_text
+    
+    def _process_ocr_batch_parallel(self, images: list, start_page: int, max_workers: int) -> str:
+        """
+        Process a batch of images in parallel using ThreadPoolExecutor
+        
+        Args:
+            images: List of PIL images for this batch
+            start_page: Starting page number (for logging)
+            max_workers: Maximum number of parallel workers
+            
+        Returns:
+            Combined text from all images in batch
+        """
+        import concurrent.futures
+        from typing import Tuple
+        
+        def ocr_single_page(page_data: Tuple[int, any]) -> Tuple[int, str]:
+            """OCR a single page and return (page_number, text)"""
+            page_idx, image = page_data
+            page_number = start_page + page_idx + 1
+            
+            try:
+                # Set timeout for individual page OCR (30 seconds max per page)
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError(f"OCR timeout for page {page_number}")
+                
+                # Set up timeout (only on Unix systems)
+                if hasattr(signal, 'SIGALRM'):
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(ocr_config.page_timeout)
+                
+                logger.debug(f"OCR processing page {page_number}")
+                text = pytesseract.image_to_string(
+                    image, 
+                    lang=ocr_config.languages, 
+                    timeout=ocr_config.page_timeout - 5
+                )
+                
+                # Clear timeout
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
+                
+                return (page_idx, text)
+                
+            except Exception as e:
+                logger.warning(f"Failed to OCR page {page_number}: {str(e)}")
+                return (page_idx, "")  # Return empty text for failed pages
+        
+        # Process pages in parallel
+        page_texts = [""] * len(images)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all pages for processing
+            future_to_page = {
+                executor.submit(ocr_single_page, (i, img)): i 
+                for i, img in enumerate(images)
+            }
+            
+            # Collect results with timeout
+            for future in concurrent.futures.as_completed(future_to_page, timeout=ocr_config.batch_timeout):
+                try:
+                    page_idx, text = future.result(timeout=5)  # 5 second timeout to get result
+                    page_texts[page_idx] = text
+                except Exception as e:
+                    page_idx = future_to_page[future]
+                    logger.warning(f"Failed to get OCR result for page {start_page + page_idx + 1}: {e}")
+                    page_texts[page_idx] = ""
+        
+        # Combine all page texts
+        combined_text = "\n\n".join(page_texts)
+        return combined_text
+    
+    def _process_ocr_batch(self, images: list, start_page: int, total_pages: int, progress_callback=None) -> str:
+        """
+        Process small batch of images sequentially (fallback for small PDFs)
+        
+        Args:
+            images: List of PIL images
+            start_page: Starting page number
+            total_pages: Total pages for logging
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Combined text
+        """
+        text = ""
+        for i, image in enumerate(images):
+            try:
+                page_number = start_page + i + 1
+                logger.info(f"OCR processing page {page_number}/{total_pages}")
+                page_text = pytesseract.image_to_string(image, lang=ocr_config.languages)
+                text += page_text + "\n\n"
+                
+                # Update progress via callback
+                if progress_callback:
+                    progress_callback(page_number, total_pages, f"Processing page {page_number}/{total_pages}")
+                
+                # Free memory after each page
+                image.close()
+                del image
+                
+            except Exception as page_error:
+                logger.warning(f"Failed to OCR page {page_number}, skipping: {page_error}")
+                continue
+        
+        return text
     
     def chunk_text(
         self,
