@@ -140,15 +140,15 @@ async def upload_document(
                 detail=f"File type {file_ext} not supported. Allowed: {', '.join(allowed_types)}"
             )
         
-        # Validate file size (10MB max)
+        # Validate file size (200MB max for large documents)
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
         
-        if file_size > 10 * 1024 * 1024:  # 10MB
+        if file_size > 200 * 1024 * 1024:  # 200MB
             raise HTTPException(
                 status_code=400,
-                detail="File size exceeds 10MB limit"
+                detail="File size exceeds 200MB limit"
             )
         
         # Save file
