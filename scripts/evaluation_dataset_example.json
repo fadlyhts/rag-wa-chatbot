@@ -1,0 +1,41 @@
+{
+  "description": "Contoh dataset untuk evaluasi RAG system",
+  "instructions": "Ganti dengan pertanyaan sesuai knowledge base Anda",
+  "questions": [
+    {
+      "id": "Q001",
+      "question": "Apa jam operasional kantor?",
+      "ground_truth": "Kantor beroperasi Senin-Jumat, pukul 08:00-17:00 WIB",
+      "category": "general",
+      "difficulty": "easy"
+    },
+    {
+      "id": "Q002",
+      "question": "Bagaimana cara mengajukan cuti tahunan?",
+      "ground_truth": "Pengajuan cuti tahunan dilakukan melalui sistem HRIS minimal 3 hari kerja sebelumnya",
+      "category": "hr",
+      "difficulty": "easy"
+    },
+    {
+      "id": "Q003",
+      "question": "Apa saja dokumen yang diperlukan untuk pengajuan reimbursement?",
+      "ground_truth": "Dokumen yang diperlukan: invoice asli, bukti pembayaran, dan form reimbursement yang telah diisi lengkap",
+      "category": "finance",
+      "difficulty": "medium"
+    },
+    {
+      "id": "Q004",
+      "question": "Berapa lama proses approval cuti biasanya?",
+      "ground_truth": "Proses approval cuti biasanya memakan waktu 1-2 hari kerja",
+      "category": "hr",
+      "difficulty": "easy"
+    },
+    {
+      "id": "Q005",
+      "question": "Siapa yang harus dihubungi jika ada masalah IT?",
+      "ground_truth": "Untuk masalah IT, silakan hubungi tim IT Support melalui email itsupport@company.com atau ext. 1234",
+      "category": "it",
+      "difficulty": "easy"
+    }
+  ]
+}
