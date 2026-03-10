@@ -40,8 +40,8 @@ class RAGConfig:
     
     # Vector size depends on embedding model:
     # - OpenAI text-embedding-3-small: 1536
-    # - Gemini text-embedding-004: 768
-    vector_size: int = 768 if settings.AI_PROVIDER == "gemini" else 1536
+    # - Gemini gemini-embedding-001: 3072
+    vector_size: int = 3072 if settings.AI_PROVIDER == "gemini" else 1536
     
     # RAG Settings
     chunk_size: int = settings.RAG_CHUNK_SIZE
