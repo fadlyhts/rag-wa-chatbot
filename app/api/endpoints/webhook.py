@@ -224,6 +224,55 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
     )
 
 
+# ─── Helper: format source references for WhatsApp ───────────────────────────
+def format_sources_for_whatsapp(
+    sources_metadata: list,
+    min_score: float = 0.75,
+    max_sources: int = 3,
+) -> str:
+    """
+    Format daftar sumber dokumen menjadi teks yang cocok untuk WhatsApp.
+    Hanya menampilkan sumber dengan relevansi >= min_score.
+
+    Contoh output:
+        📚 *Sumber:*
+        1. PKB PTPN1 (hal. 12)
+        2. SOP Cuti (hal. 5)
+    """
+    relevant = [
+        s for s in sources_metadata
+        if s.get('score', 0) >= min_score
+    ]
+    if not relevant:
+        return ""
+
+    # Deduplikasi berdasarkan file_name + page_number
+    seen = set()
+    unique = []
+    for s in relevant:
+        key = (s.get('file_name', ''), s.get('page_number', ''))
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+        if len(unique) >= max_sources:
+            break
+
+    lines = ["\n\n📚 *Sumber:*"]
+    for i, src in enumerate(unique, 1):
+        file_name = src.get('file_name') or src.get('title') or 'Dokumen'
+        page = src.get('page_number')
+        url = src.get('url')
+
+        if url:
+            lines.append(f"{i}. [{file_name}]({url})")
+        elif page:
+            lines.append(f"{i}. {file_name} (hal. {page})")
+        else:
+            lines.append(f"{i}. {file_name}")
+
+    return "\n".join(lines)
+
+
 async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_raw: str = None):
     """
     Send AI-powered auto-reply using RAG system.
@@ -278,6 +327,14 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
                     )
             else:
                 logger.warning(f"[{request_id}] No source documents retrieved")
+            
+            # Tambahkan referensi sumber ke pesan WhatsApp (hanya jika relevan)
+            sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.75)
+            if sources_text:
+                reply_text = reply_text + sources_text
+                logger.info(f"[{request_id}] Sources appended to reply")
+            else:
+                logger.info(f"[{request_id}] No high-relevance sources to append (threshold=0.75)")
             
             # Gunakan phone_raw (@lid/@c.us) sebagai chat_id agar pesan sampai
             # pada akun WhatsApp baru yang memakai format @lid
