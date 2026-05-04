@@ -146,6 +146,7 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
         background_tasks.add_task(
             send_auto_reply,
             phone=phone,
+            phone_raw=phone_raw,  # sertakan suffix @lid / @c.us
             user_message=message_text,
             request_id=request_id
         )
@@ -223,9 +224,11 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
     )
 
 
-async def send_auto_reply(phone: str, user_message: str, request_id: str):
+async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_raw: str = None):
     """
-    Send AI-powered auto-reply using RAG system
+    Send AI-powered auto-reply using RAG system.
+    phone_raw: nomor lengkap dengan suffix (@c.us / @lid) dari WAHA.
+               Diperlukan karena akun WhatsApp baru menggunakan @lid bukan @c.us.
     """
     from app.database.session import get_db
     
