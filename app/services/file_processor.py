@@ -109,8 +109,25 @@ class FileProcessor:
                     if not file_path.exists():
                         raise FileNotFoundError(f"File not found: {doc.file_path}")
                 
-                text = self.document_processor.read_file(str(file_path))
+                # Create progress callback for OCR updates
+                def progress_callback(current: int, total: int, message: str):
+                    try:
+                        doc.ocr_progress_current = current
+                        doc.ocr_progress_total = total
+                        doc.ocr_progress_message = message
+                        db.commit()
+                        logger.debug(f"OCR Progress: {current}/{total} - {message}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update OCR progress: {e}")
+                
+                text = self.document_processor.read_file(str(file_path), progress_callback)
                 doc.content = text
+                
+                # Clear progress tracking after completion
+                doc.ocr_progress_current = 0
+                doc.ocr_progress_total = 0
+                doc.ocr_progress_message = "Text extraction completed"
+                
                 db.commit()
                 logger.info(f"Extracted {len(text)} characters from {doc.title}")
             except Exception as e:
