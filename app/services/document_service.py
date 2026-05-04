@@ -48,7 +48,7 @@ class DocumentService:
         Returns:
             Paginated document list
         """
-        query = db.query(Document).options(joinedload(Document.category))
+        query = db.query(Document).options(joinedload(Document.category)).filter(Document.is_active == True)
         
         # Apply filters
         if search:
@@ -115,7 +115,8 @@ class DocumentService:
             Document details or None
         """
         doc = db.query(Document).options(joinedload(Document.category)).filter(
-            Document.id == document_id
+            Document.id == document_id,
+            Document.is_active == True
         ).first()
         
         if not doc:
@@ -140,7 +141,10 @@ class DocumentService:
         Returns:
             Document preview or None
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return None
@@ -171,6 +175,14 @@ class DocumentService:
         Returns:
             List of document chunks
         """
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
+        
+        if not doc:
+            return []
+
         chunks = db.query(DocumentChunk).filter(
             DocumentChunk.document_id == document_id
         ).order_by(DocumentChunk.chunk_index).all()
@@ -200,7 +212,10 @@ class DocumentService:
         Returns:
             Updated document or None
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return None
@@ -236,7 +251,10 @@ class DocumentService:
         Returns:
             True if successful
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return False
@@ -305,7 +323,10 @@ class DocumentService:
         Returns:
             Usage statistics
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return DocumentUsageStats(
