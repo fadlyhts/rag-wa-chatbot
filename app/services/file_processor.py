@@ -99,48 +99,64 @@ class FileProcessor:
             
             logger.info(f"Processing document {document_id}: {doc.title}")
             
-            # Extract text from file
+            # Resolve file path
             try:
-                # Ensure file path exists, try both absolute and relative
                 file_path = Path(doc.file_path)
                 if not file_path.exists():
-                    # Try absolute path from current directory
                     file_path = Path.cwd() / doc.file_path
                     if not file_path.exists():
                         raise FileNotFoundError(f"File not found: {doc.file_path}")
+            except Exception as e:
+                raise Exception(f"File resolution failed: {str(e)}")
+            
+            # Extract text with page-level granularity
+            try:
+                pages = self.document_processor.read_file_pages(str(file_path))
                 
-                text = self.document_processor.read_file(str(file_path))
-                doc.content = text
+                # Save combined text to DB for preview/search
+                full_text = "\n".join(p["text"] for p in pages)
+                doc.content = full_text
                 db.commit()
-                logger.info(f"Extracted {len(text)} characters from {doc.title}")
+                
+                total_pages = len(pages)
+                logger.info(
+                    f"Extracted {len(full_text)} chars from {doc.title} "
+                    f"({total_pages} pages)"
+                )
             except Exception as e:
                 raise Exception(f"Text extraction failed: {str(e)}")
             
-            if not text.strip():
+            if not full_text.strip():
                 raise Exception("Document is empty after extraction")
             
-            # Chunk text
-            chunks = self.document_processor.chunk_text(text)
-            logger.info(f"Split into {len(chunks)} chunks")
+            # Chunk text while preserving page numbers
+            page_chunks = self.document_processor.chunk_text_with_pages(pages)
+            chunk_texts = [c["text"] for c in page_chunks]
+            logger.info(f"Split into {len(page_chunks)} page-aware chunks")
             
-            # Generate embeddings (with progress logging for large documents)
-            logger.info(f"Starting embedding generation for {len(chunks)} chunks...")
-            embeddings = await self.embeddings.generate_embeddings_batch_async(chunks)
+            # Generate embeddings
+            logger.info(f"Starting embedding generation for {len(chunk_texts)} chunks...")
+            embeddings = await self.embeddings.generate_embeddings_batch_async(chunk_texts)
             logger.info(f"Successfully generated {len(embeddings)} embeddings")
             
-            # Generate unique UUID IDs for chunks (Qdrant requires UUID or integer)
-            chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            # Prepare Qdrant payloads with page metadata
+            chunk_ids = [str(uuid.uuid4()) for _ in range(len(page_chunks))]
             
-            # Prepare payloads for Qdrant
+            # File name without extension for display
+            file_name = Path(doc.file_path).stem if doc.file_path else doc.title
+            
             payloads = []
-            for i, chunk in enumerate(chunks):
+            for i, chunk_info in enumerate(page_chunks):
                 payload = {
                     'document_id': doc.id,
                     'title': doc.title,
-                    'content': chunk,
+                    'file_name': file_name,
+                    'content': chunk_info["text"],
                     'content_type': doc.content_type or "document",
                     'chunk_index': i,
-                    'total_chunks': len(chunks),
+                    'total_chunks': len(page_chunks),
+                    'page_number': chunk_info["page_number"],
+                    'page_numbers': chunk_info["page_numbers"],
                     'category_id': doc.category_id
                 }
                 payloads.append(payload)
@@ -151,22 +167,22 @@ class FileProcessor:
                 vectors=embeddings,
                 payloads=payloads
             )
-            logger.info(f"Inserted {len(chunks)} chunks into Qdrant")
+            logger.info(f"Inserted {len(page_chunks)} chunks into Qdrant")
             
             # Create chunk records in database
-            for i, (chunk, chunk_id) in enumerate(zip(chunks, chunk_ids)):
+            for i, (chunk_info, chunk_id) in enumerate(zip(page_chunks, chunk_ids)):
                 chunk_record = DocumentChunk(
                     document_id=doc.id,
                     chunk_index=i,
-                    chunk_text=chunk,
-                    chunk_size=self.document_processor.count_tokens(chunk),
+                    chunk_text=chunk_info["text"],
+                    chunk_size=self.document_processor.count_tokens(chunk_info["text"]),
                     qdrant_point_id=chunk_id
                 )
                 db.add(chunk_record)
             
             # Update document status
             doc.embedding_status = "completed"
-            doc.chunks_count = len(chunks)
+            doc.chunks_count = len(page_chunks)
             doc.processed_at = datetime.utcnow()
             doc.failed_reason = None
             

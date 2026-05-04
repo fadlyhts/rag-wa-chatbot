@@ -80,19 +80,30 @@ class DocumentProcessor:
     
     def _read_pdf(self, file_path: Path) -> str:
         """Read PDF file with OCR fallback for scanned PDFs"""
-        text = ""
+        pages = self._read_pdf_pages(file_path)
+        return "\n".join(p["text"] for p in pages)
+
+    def _read_pdf_pages(self, file_path: Path) -> List[Dict[str, Any]]:
+        """
+        Read PDF file and return text per page.
+        
+        Returns:
+            List of dicts: [{"page_number": 1, "text": "..."}, ...]
+        """
+        pages: List[Dict[str, Any]] = []
         with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-            for page in pdf_reader.pages:
-                page_text = page.extract_text()
-                text += page_text + "\n"
+            for i, page in enumerate(pdf_reader.pages, 1):
+                page_text = page.extract_text() or ""
+                pages.append({"page_number": i, "text": page_text})
         
-        # If PDF has very little text, it's likely scanned - use OCR
-        if len(text.strip()) < 100 and OCR_AVAILABLE:
+        # If PDF has very little text overall, it's likely scanned - use OCR
+        total_text = "".join(p["text"] for p in pages)
+        if len(total_text.strip()) < 100 and OCR_AVAILABLE:
             logger.info(f"PDF appears to be scanned, using OCR: {file_path}")
-            text = self._read_pdf_ocr(file_path)
+            pages = self._read_pdf_ocr_pages(file_path)
         
-        return text
+        return pages
     
     def _read_docx(self, file_path: Path) -> str:
         """Read DOCX file"""
@@ -133,14 +144,16 @@ class DocumentProcessor:
             raise Exception(f"Failed to extract text from image: {str(e)}")
     
     def _read_pdf_ocr(self, file_path: Path) -> str:
+        """Read scanned PDF using OCR (returns single string)"""
+        pages = self._read_pdf_ocr_pages(file_path)
+        return "\n\n".join(p["text"] for p in pages)
+
+    def _read_pdf_ocr_pages(self, file_path: Path) -> List[Dict[str, Any]]:
         """
-        Read scanned PDF using OCR
+        Read scanned PDF using OCR, returning text per page.
         
-        Args:
-            file_path: Path to PDF file
-            
         Returns:
-            Extracted text from scanned PDF
+            List of dicts: [{"page_number": 1, "text": "..."}, ...]
         """
         if not OCR_AVAILABLE:
             raise Exception("OCR libraries not installed. Please install: pip install pytesseract Pillow pdf2image")
@@ -148,35 +161,32 @@ class DocumentProcessor:
         try:
             logger.info(f"Performing OCR on scanned PDF: {file_path}")
             
-            # Convert PDF pages to images with lower DPI to reduce memory usage
-            # 150 DPI is good balance between quality and performance
             images = convert_from_path(file_path, dpi=150)
             total_pages = len(images)
             
             logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 150)")
             
-            # Perform OCR on each page
-            text = ""
+            pages: List[Dict[str, Any]] = []
             for i, image in enumerate(images, 1):
                 try:
                     logger.info(f"OCR processing page {i}/{total_pages}")
-                    page_text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
-                    text += page_text + "\n\n"
+                    page_text = pytesseract.image_to_string(image, lang='eng+ind')
+                    pages.append({"page_number": i, "text": page_text})
                     
-                    # Free memory after each page to prevent memory buildup
                     image.close()
                     del image
                     
-                    # Log progress every 10 pages
                     if i % 10 == 0:
-                        logger.info(f"OCR progress: {i}/{total_pages} pages completed, {len(text)} characters extracted so far")
+                        logger.info(f"OCR progress: {i}/{total_pages} pages completed")
                         
                 except Exception as page_error:
                     logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
+                    pages.append({"page_number": i, "text": ""})
                     continue
             
-            logger.info(f"OCR completed: extracted {len(text)} characters from {total_pages} pages")
-            return text
+            total_chars = sum(len(p["text"]) for p in pages)
+            logger.info(f"OCR completed: extracted {total_chars} characters from {total_pages} pages")
+            return pages
             
         except Exception as e:
             logger.error(f"OCR failed for PDF {file_path}: {e}")
@@ -235,6 +245,115 @@ class DocumentProcessor:
         
         logger.info(f"Split text into {len(chunks)} chunks (size: {chunk_size}, overlap: {overlap})")
         return chunks
+
+    def chunk_text_with_pages(
+        self,
+        pages: List[Dict[str, Any]],
+        chunk_size: Optional[int] = None,
+        overlap: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Split page-aware text into chunks while preserving page number info.
+        
+        Args:
+            pages: List of {"page_number": int, "text": str}
+            chunk_size: Size of each chunk in tokens
+            overlap: Overlap between chunks in tokens
+            
+        Returns:
+            List of {"text": str, "page_number": int, "page_numbers": List[int]}
+        """
+        chunk_size = chunk_size or self.chunk_size
+        overlap = overlap or self.chunk_overlap
+        
+        # Build a list of (sentence, page_number) tuples
+        sentence_page_pairs = []
+        for page_info in pages:
+            page_num = page_info["page_number"]
+            page_text = page_info["text"].replace('\n', ' ')
+            
+            if not page_text.strip():
+                continue
+            
+            sentences = page_text.split('. ')
+            for sent in sentences:
+                sent = sent.strip()
+                if sent:
+                    sentence_page_pairs.append((sent + ". ", page_num))
+        
+        if not sentence_page_pairs:
+            return []
+        
+        chunks = []
+        current_chunk = ""
+        current_tokens = 0
+        current_pages = set()
+        
+        for sentence, page_num in sentence_page_pairs:
+            sentence_tokens = self.count_tokens(sentence)
+            
+            if current_tokens + sentence_tokens <= chunk_size:
+                current_chunk += sentence
+                current_tokens += sentence_tokens
+                current_pages.add(page_num)
+            else:
+                if current_chunk:
+                    sorted_pages = sorted(current_pages)
+                    chunks.append({
+                        "text": current_chunk.strip(),
+                        "page_number": sorted_pages[0],
+                        "page_numbers": sorted_pages,
+                    })
+                
+                # Start new chunk with overlap
+                if overlap > 0 and chunks:
+                    overlap_text = current_chunk[-overlap * 4:]
+                    current_chunk = overlap_text + sentence
+                    current_tokens = self.count_tokens(current_chunk)
+                    # Overlap text comes from previous pages + new page
+                    current_pages = set(current_pages)  # carry over
+                    current_pages.add(page_num)
+                else:
+                    current_chunk = sentence
+                    current_tokens = sentence_tokens
+                    current_pages = {page_num}
+        
+        if current_chunk:
+            sorted_pages = sorted(current_pages)
+            chunks.append({
+                "text": current_chunk.strip(),
+                "page_number": sorted_pages[0],
+                "page_numbers": sorted_pages,
+            })
+        
+        logger.info(
+            f"Split {len(pages)} pages into {len(chunks)} page-aware chunks "
+            f"(size: {chunk_size}, overlap: {overlap})"
+        )
+        return chunks
+
+    def read_file_pages(self, file_path: str) -> List[Dict[str, Any]]:
+        """
+        Read file and return page-aware data.
+        For PDFs: returns actual page numbers.
+        For other formats: returns single page (page_number=1).
+        
+        Returns:
+            List of {"page_number": int, "text": str}
+        """
+        file_path = Path(file_path)
+        extension = file_path.suffix.lower()
+        
+        try:
+            if extension == '.pdf':
+                return self._read_pdf_pages(file_path)
+            else:
+                # Non-PDF: treat as single page
+                text = self.read_file(str(file_path))
+                return [{"page_number": 1, "text": text}]
+        except Exception as e:
+            logger.error(f"Error reading file pages {file_path}: {e}")
+            raise
     
     def process_document(
         self,
