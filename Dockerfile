@@ -5,7 +5,6 @@ WORKDIR /app
 # Install system dependencies including OCR tools
 RUN apt-get update && apt-get install -y \
     gcc \
-    git \
     default-libmysqlclient-dev \
     pkg-config \
     libmagic1 \
