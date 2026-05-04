@@ -261,7 +261,20 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
             )
             
             reply_text = response['text']
+            sources_metadata = response.get('sources_metadata', [])
             logger.info(f"[{request_id}] AI response generated: {reply_text[:100]}...")
+            
+            # Log sumber dokumen yang ditemukan
+            if sources_metadata:
+                logger.info(f"[{request_id}] Sources ({len(sources_metadata)} docs):")
+                for i, src in enumerate(sources_metadata, 1):
+                    logger.info(
+                        f"  [{i}] {src.get('file_name', '-')} "
+                        f"hal.{src.get('page_number', '-')} "
+                        f"skor={src.get('score', 0):.3f}"
+                    )
+            else:
+                logger.warning(f"[{request_id}] No source documents retrieved")
             
             # Send message via WAHA
             logger.info(f"[{request_id}] Sending message to {phone}")

@@ -189,17 +189,20 @@ async def generate_ai_response(
         response_time = int((time.time() - start_time) * 1000)
         logger.info(f"RAG response generated in {response_time}ms for user {user_id}")
         
-        # Save assistant response with metadata
+        # Save assistant response with full metadata
         save_assistant_message(
             conversation_id=conversation_id,
             user_id=user_id,
             content=response['text'],
             rag_context={
-                'retrieved_docs': response['sources'],
-                'relevance_scores': response['scores'],
-                'docs_retrieved': response['docs_retrieved']
+                # ── Data lengkap (baru) ──
+                'sources_metadata':  response.get('sources_metadata', []),
+                # ── Backward-compat ──
+                'retrieved_docs':    response.get('sources', []),
+                'relevance_scores':  response.get('scores', []),
+                'docs_retrieved':    response.get('docs_retrieved', 0),
             },
-            llm_tokens=response['tokens'],
+            llm_tokens=response.get('tokens', 0),
             response_time_ms=response.get('total_time_ms', response_time),
             db=db
         )

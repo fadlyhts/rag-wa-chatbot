@@ -49,6 +49,12 @@ class WAHAClient:
                     headers=headers
                 )
                 response.raise_for_status()
+                
+                # WAHA sendText returns 201 with empty body (no JSON)
+                if not response.text:
+                    logger.info(f"Message sent to {to} via session {self.session}")
+                    return {"status": "sent", "chatId": chat_id}
+                
                 result = response.json()
                 logger.info(f"Message sent to {to} via session {self.session}")
                 return result
