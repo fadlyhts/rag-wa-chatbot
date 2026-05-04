@@ -140,24 +140,33 @@ async def upload_document(
                 detail=f"File type {file_ext} not supported. Allowed: {', '.join(allowed_types)}"
             )
         
-        # Validate file size (10MB max)
+        # Get file size without reading entire file into memory
+        # For SpooledTemporaryFile, seek to end to get size
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
         
-        if file_size > 10 * 1024 * 1024:  # 10MB
+        logger.info(f"Receiving file: {file.filename}, size: {file_size / (1024*1024):.2f}MB")
+        
+        if file_size > 200 * 1024 * 1024:  # 200MB
             raise HTTPException(
                 status_code=400,
-                detail="File size exceeds 10MB limit"
+                detail="File size exceeds 200MB limit"
             )
         
-        # Save file
+        # Save file with streaming to handle large files
         timestamp = int(Path(file.filename).stem.encode().hex(), 16) % 1000000
         safe_filename = f"{timestamp}_{file.filename}"
         file_path = UPLOAD_DIR / safe_filename
         
+        # Stream file to disk in chunks for large files
+        chunk_size = 1024 * 1024  # 1MB chunks
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.write(chunk)
         
         logger.info(f"Saved uploaded file: {safe_filename}")
         
