@@ -279,9 +279,11 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
             else:
                 logger.warning(f"[{request_id}] No source documents retrieved")
             
-            # Send message via WAHA
-            logger.info(f"[{request_id}] Sending message to {phone}")
-            result = waha.send_message(to=phone, text=reply_text)
+            # Gunakan phone_raw (@lid/@c.us) sebagai chat_id agar pesan sampai
+            # pada akun WhatsApp baru yang memakai format @lid
+            chat_id = phone_raw if phone_raw else None
+            logger.info(f"[{request_id}] Sending message to {phone} (chat_id={chat_id})")
+            result = waha.send_message(to=phone, text=reply_text, chat_id=chat_id)
             logger.info(f"[{request_id}] WAHA send result: {result}")
             
             logger.info(
@@ -302,7 +304,7 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
         try:
             waha = WAHAClient(session="default")
             error_msg = "Maaf, saya mengalami kesulitan memproses permintaan Anda. Silakan coba lagi dalam beberapa saat. 😊"
-            waha.send_message(to=phone, text=error_msg)
+            waha.send_message(to=phone, text=error_msg, chat_id=phone_raw if phone_raw else None)
             logger.info(f"[{request_id}] Error message sent to user")
         except Exception as send_error:
             logger.error(f"[{request_id}] Failed to send error message: {str(send_error)}")
