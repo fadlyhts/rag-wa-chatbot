@@ -1,6 +1,7 @@
 """Prompt templates for RAG system"""
 
 from typing import List, Dict
+from langchain_core.prompts import PromptTemplate
 
 
 SYSTEM_PROMPT = """You are an intelligent AI assistant for a WhatsApp chatbot. Your role is to provide helpful, accurate, and friendly responses based on the provided context.
@@ -172,3 +173,29 @@ QUICK_REPLIES = {
 def get_quick_replies(intent: str) -> List[str]:
     """Get quick reply suggestions based on intent"""
     return QUICK_REPLIES.get(intent, QUICK_REPLIES['general'])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LCEL Prompt Template
+# ─────────────────────────────────────────────────────────────────────────────
+
+LCEL_RAG_PROMPT = PromptTemplate.from_template(
+    """Anda adalah asisten AI yang cerdas untuk chatbot WhatsApp perusahaan. Tugas Anda adalah memberikan jawaban yang akurat, ramah, dan profesional berdasarkan konteks yang diberikan.
+
+Panduan:
+- Jawab pertanyaan HANYA berdasarkan informasi yang ada di dalam konteks.
+- Jika jawabannya tidak ada di dalam konteks, katakan dengan sopan bahwa Anda belum memiliki informasi tersebut. JANGAN MENGARANG JAWABAN.
+- Karena ini adalah WhatsApp, berikan jawaban yang singkat, padat, dan jelas.
+- Gunakan bahasa Indonesia yang baik, ramah, dan gunakan emoji secukupnya.
+- Format jawaban agar mudah dibaca (gunakan baris baru atau bullet point jika perlu).
+
+Konteks Informasi:
+{context}
+
+Riwayat Percakapan Sebelumnya:
+{conversation_history}
+
+Pertanyaan Pengguna: {question}
+
+Berikan jawaban yang ramah dan membantu:"""
+)
