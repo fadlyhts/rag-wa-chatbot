@@ -106,7 +106,7 @@ async def test_rag_chain(request: RAGTestRequest):
     ```
     """
     try:
-        from app.rag.lcel_chain import rag_chain_with_sources
+        from app.rag.chain import rag_chain_with_sources
 
         logger.info(f"[RAG Test] Query: {request.question[:80]}")
 
@@ -143,7 +143,7 @@ async def test_rag_chain_get(question: str = "Halo, siapa kamu?"):
     Contoh: GET /api/test/rag?question=Apa+kebijakan+cuti
     """
     try:
-        from app.rag.lcel_chain import rag_chain_with_sources
+        from app.rag.chain import rag_chain_with_sources
 
         result = await rag_chain_with_sources.generate_response_async(
             query=question,

@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, AsyncIterator
 import google.generativeai as genai
 import logging
 from app.rag.config import rag_config
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -281,3 +282,37 @@ class GeminiGenerator:
 
 # Global Gemini generator instance
 gemini_generator = GeminiGenerator()
+
+
+class GeminiLCELWrapper:
+    """
+    Wraps GeminiGenerator into an LCEL-compatible callable
+    (accepts LangChain message list, returns string).
+    """
+
+    def invoke(self, messages: list) -> str:
+        # Convert LangChain messages to dict format used by GeminiGenerator
+        converted: List[Dict[str, str]] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                converted.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                converted.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                converted.append({"role": "assistant", "content": msg.content})
+
+        result = gemini_generator.generate(converted)
+        return result.get("content") or result.get("text", "")
+
+    async def ainvoke(self, messages: list) -> str:
+        converted: List[Dict[str, str]] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                converted.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                converted.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                converted.append({"role": "assistant", "content": msg.content})
+
+        result = await gemini_generator.generate_async(converted)
+        return result.get("content") or result.get("text", "")
