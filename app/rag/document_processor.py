@@ -285,45 +285,59 @@ class DocumentProcessor:
             return []
         
         chunks = []
-        current_chunk = ""
+        current_sentences = []  # List of (sentence_text, page_num, tokens)
         current_tokens = 0
-        current_pages = set()
         
         for sentence, page_num in sentence_page_pairs:
             sentence_tokens = self.count_tokens(sentence)
             
             if current_tokens + sentence_tokens <= chunk_size:
-                current_chunk += sentence
+                current_sentences.append((sentence, page_num, sentence_tokens))
                 current_tokens += sentence_tokens
-                current_pages.add(page_num)
             else:
-                if current_chunk:
-                    sorted_pages = sorted(current_pages)
+                if current_sentences:
+                    chunk_text = "".join(s for s, p, t in current_sentences).strip()
+                    chunk_pages = sorted(list(set(p for s, p, t in current_sentences)))
                     chunks.append({
-                        "text": current_chunk.strip(),
-                        "page_number": sorted_pages[0],
-                        "page_numbers": sorted_pages,
+                        "text": chunk_text,
+                        "page_number": chunk_pages[0] if chunk_pages else page_num,
+                        "page_numbers": chunk_pages,
                     })
                 
                 # Start new chunk with overlap
-                if overlap > 0 and chunks:
-                    overlap_text = current_chunk[-overlap * 4:]
-                    current_chunk = overlap_text + sentence
-                    current_tokens = self.count_tokens(current_chunk)
-                    # Overlap text comes from previous pages + new page
-                    current_pages = set(current_pages)  # carry over
-                    current_pages.add(page_num)
+                if overlap > 0 and current_sentences:
+                    overlap_sentences = []
+                    overlap_tokens = 0
+                    # Traverse backwards to get overlap sentences
+                    for s, p, t in reversed(current_sentences):
+                        if overlap_tokens + t <= overlap:
+                            overlap_sentences.insert(0, (s, p, t))
+                            overlap_tokens += t
+                        else:
+                            break
+                    
+                    # If overlap limit is smaller than a single sentence, at least carry over the last sentence
+                    if not overlap_sentences and current_sentences:
+                        overlap_sentences = [current_sentences[-1]]
+                        overlap_tokens = current_sentences[-1][2]
+                        
+                    current_sentences = overlap_sentences
+                    current_tokens = overlap_tokens
+                    
+                    # Add the new sentence
+                    current_sentences.append((sentence, page_num, sentence_tokens))
+                    current_tokens += sentence_tokens
                 else:
-                    current_chunk = sentence
+                    current_sentences = [(sentence, page_num, sentence_tokens)]
                     current_tokens = sentence_tokens
-                    current_pages = {page_num}
         
-        if current_chunk:
-            sorted_pages = sorted(current_pages)
+        if current_sentences:
+            chunk_text = "".join(s for s, p, t in current_sentences).strip()
+            chunk_pages = sorted(list(set(p for s, p, t in current_sentences)))
             chunks.append({
-                "text": current_chunk.strip(),
-                "page_number": sorted_pages[0],
-                "page_numbers": sorted_pages,
+                "text": chunk_text,
+                "page_number": chunk_pages[0] if chunk_pages else 1,
+                "page_numbers": chunk_pages,
             })
         
         logger.info(
