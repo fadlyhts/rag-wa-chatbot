@@ -5,6 +5,8 @@ import os
 import hashlib
 import logging
 import gc
+import tempfile
+import time
 from pathlib import Path
 import PyPDF2
 import docx
@@ -166,39 +168,61 @@ class DocumentProcessor:
             info = pdfinfo_from_path(file_path)
             total_pages = info["Pages"]
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 100)")
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 72)")
+            
+            # Sangat Penting: Batasi Tesseract agar hanya menggunakan 1 thread CPU
+            # Jika tidak dibatasi, Tesseract akan memakai semua core (100%) dan memicu crash/healthcheck timeout
+            os.environ['OMP_THREAD_LIMIT'] = '1'
+            os.environ['TESSCORE_LIMIT'] = '1'
             
             pages: List[Dict[str, Any]] = []
-            for i in range(1, total_pages + 1):
-                try:
-                    logger.info(f"OCR processing page {i}/{total_pages}")
-                    # Load only ONE page at a time to prevent Out-Of-Memory (OOM) crashes
-                    images = convert_from_path(file_path, dpi=100, first_page=i, last_page=i)
-                    
-                    if not images:
+            
+            # Create a temporary directory to store extracted images on disk
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                for i in range(1, total_pages + 1):
+                    try:
+                        logger.info(f"OCR processing page {i}/{total_pages}")
+                        
+                        # paths_only=True means it writes direct to disk and returns paths, NOT loading into Python RAM
+                        image_paths = convert_from_path(
+                            file_path, 
+                            dpi=72, 
+                            first_page=i, 
+                            last_page=i, 
+                            output_folder=tmp_dir,
+                            fmt="jpeg",
+                            paths_only=True
+                        )
+                        
+                        if not image_paths:
+                            continue
+                            
+                        img_path = image_paths[0]
+                        
+                        # Pass the file path directly to Tesseract, bypassing Python memory completely
+                        page_text = pytesseract.image_to_string(img_path, lang='eng+ind', timeout=60)
+                        pages.append({"page_number": i, "text": page_text})
+                        
+                        # Clean up the temp image file immediately
+                        if os.path.exists(img_path):
+                            os.remove(img_path)
+                            
+                        # Force garbage collection
+                        gc.collect()
+                        
+                        # Beri nafas untuk CPU (1 detik) agar FastAPI bisa merespon Healthcheck dari server Easypanel
+                        time.sleep(1)
+                        
+                        if i % 10 == 0:
+                            logger.info(f"OCR progress: {i}/{total_pages} pages completed")
+                            
+                    except Exception as page_error:
+                        logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
+                        pages.append({"page_number": i, "text": ""})
+                        # Force garbage collection even on error
+                        gc.collect()
+                        time.sleep(1)
                         continue
-                        
-                    image = images[0]
-                    # Add timeout to prevent hanging on complex pages
-                    page_text = pytesseract.image_to_string(image, lang='eng+ind', timeout=60)
-                    pages.append({"page_number": i, "text": page_text})
-                    
-                    image.close()
-                    del image
-                    del images
-                    
-                    # Force garbage collection
-                    gc.collect()
-                    
-                    if i % 10 == 0:
-                        logger.info(f"OCR progress: {i}/{total_pages} pages completed")
-                        
-                except Exception as page_error:
-                    logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
-                    pages.append({"page_number": i, "text": ""})
-                    # Force garbage collection even on error
-                    gc.collect()
-                    continue
             
             total_chars = sum(len(p["text"]) for p in pages)
             logger.info(f"OCR completed: extracted {total_chars} characters from {total_pages} pages")
