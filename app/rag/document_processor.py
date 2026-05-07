@@ -316,10 +316,8 @@ class DocumentProcessor:
                         else:
                             break
                     
-                    # If overlap limit is smaller than a single sentence, at least carry over the last sentence
-                    if not overlap_sentences and current_sentences:
-                        overlap_sentences = [current_sentences[-1]]
-                        overlap_tokens = current_sentences[-1][2]
+                    # We do not force carry-over if a sentence exceeds the overlap limit.
+                    # This prevents massive chunks if a single 'sentence' is huge.
                         
                     current_sentences = overlap_sentences
                     current_tokens = overlap_tokens
