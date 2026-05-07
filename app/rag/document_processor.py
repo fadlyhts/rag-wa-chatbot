@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 try:
     import pytesseract
     from PIL import Image
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_path, pdfinfo_from_path
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
@@ -161,20 +161,29 @@ class DocumentProcessor:
         try:
             logger.info(f"Performing OCR on scanned PDF: {file_path}")
             
-            images = convert_from_path(file_path, dpi=150)
-            total_pages = len(images)
+            # Get total pages without loading images
+            info = pdfinfo_from_path(file_path)
+            total_pages = info["Pages"]
             
             logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 150)")
             
             pages: List[Dict[str, Any]] = []
-            for i, image in enumerate(images, 1):
+            for i in range(1, total_pages + 1):
                 try:
                     logger.info(f"OCR processing page {i}/{total_pages}")
+                    # Load only ONE page at a time to prevent Out-Of-Memory (OOM) crashes
+                    images = convert_from_path(file_path, dpi=150, first_page=i, last_page=i)
+                    
+                    if not images:
+                        continue
+                        
+                    image = images[0]
                     page_text = pytesseract.image_to_string(image, lang='eng+ind')
                     pages.append({"page_number": i, "text": page_text})
                     
                     image.close()
                     del image
+                    del images
                     
                     if i % 10 == 0:
                         logger.info(f"OCR progress: {i}/{total_pages} pages completed")
