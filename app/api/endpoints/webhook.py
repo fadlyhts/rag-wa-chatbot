@@ -232,27 +232,25 @@ def format_sources_for_whatsapp(
 ) -> str:
     """
     Format source documents into WhatsApp-friendly text.
-    Only shows sources with relevance >= min_score.
-
-    Example output:
-        📚 *Sources:*
-        1. PKB PTPN1 (p. 12)
-        2. SOP Cuti (p. 5)
+    Only shows the most relevant chunk per file to avoid clutter.
     """
+    # Pastikan diurutkan berdasarkan score tertinggi
+    sorted_sources = sorted(sources_metadata, key=lambda x: x.get('score', 0), reverse=True)
+    
     relevant = [
-        s for s in sources_metadata
+        s for s in sorted_sources
         if s.get('score', 0) >= min_score
     ]
     if not relevant:
         return ""
 
-    # Deduplicate by file_name + page_number
-    seen = set()
+    # Deduplicate berdasarkan file_name (hanya ambil halaman paling relevan per file)
+    seen_files = set()
     unique = []
     for s in relevant:
-        key = (s.get('file_name', ''), s.get('page_number', ''))
-        if key not in seen:
-            seen.add(key)
+        file_name = s.get('file_name', '')
+        if file_name not in seen_files:
+            seen_files.add(file_name)
             unique.append(s)
         if len(unique) >= max_sources:
             break
@@ -261,12 +259,20 @@ def format_sources_for_whatsapp(
     for i, src in enumerate(unique, 1):
         file_name = src.get('file_name') or src.get('title') or 'Document'
         page = src.get('page_number')
+        pages = src.get('page_numbers')
         url = src.get('url')
+
+        # Format string halaman (contoh: hal. 3 atau hal. 3-4)
+        page_str = ""
+        if pages and isinstance(pages, list) and len(pages) > 1:
+            page_str = f"{min(pages)}-{max(pages)}"
+        elif page:
+            page_str = str(page)
 
         if url:
             lines.append(f"{i}. [{file_name}]({url})")
-        elif page:
-            lines.append(f"{i}. {file_name} (hal. {page})")
+        elif page_str:
+            lines.append(f"{i}. {file_name} (hal. {page_str})")
         else:
             lines.append(f"{i}. {file_name}")
 
