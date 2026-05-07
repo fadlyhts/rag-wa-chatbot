@@ -7,6 +7,7 @@ import logging
 import hashlib
 import uuid
 import os
+import asyncio
 
 from sqlalchemy.orm import Session
 
@@ -110,8 +111,12 @@ class FileProcessor:
                 raise Exception(f"File resolution failed: {str(e)}")
             
             # Extract text with page-level granularity
+            # PENTING: Jalankan di thread terpisah agar TIDAK memblokir event loop FastAPI
+            # Tanpa ini, OCR yang CPU-intensive akan memblokir healthcheck dan menyebabkan container di-kill
             try:
-                pages = self.document_processor.read_file_pages(str(file_path))
+                pages = await asyncio.to_thread(
+                    self.document_processor.read_file_pages, str(file_path)
+                )
                 
                 # Save combined text to DB for preview/search
                 full_text = "\n".join(p["text"] for p in pages)
