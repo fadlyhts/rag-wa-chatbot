@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import os
 import hashlib
 import logging
+import gc
 from pathlib import Path
 import PyPDF2
 import docx
@@ -165,25 +166,29 @@ class DocumentProcessor:
             info = pdfinfo_from_path(file_path)
             total_pages = info["Pages"]
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 150)")
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 100)")
             
             pages: List[Dict[str, Any]] = []
             for i in range(1, total_pages + 1):
                 try:
                     logger.info(f"OCR processing page {i}/{total_pages}")
                     # Load only ONE page at a time to prevent Out-Of-Memory (OOM) crashes
-                    images = convert_from_path(file_path, dpi=150, first_page=i, last_page=i)
+                    images = convert_from_path(file_path, dpi=100, first_page=i, last_page=i)
                     
                     if not images:
                         continue
                         
                     image = images[0]
-                    page_text = pytesseract.image_to_string(image, lang='eng+ind')
+                    # Add timeout to prevent hanging on complex pages
+                    page_text = pytesseract.image_to_string(image, lang='eng+ind', timeout=60)
                     pages.append({"page_number": i, "text": page_text})
                     
                     image.close()
                     del image
                     del images
+                    
+                    # Force garbage collection
+                    gc.collect()
                     
                     if i % 10 == 0:
                         logger.info(f"OCR progress: {i}/{total_pages} pages completed")
@@ -191,6 +196,8 @@ class DocumentProcessor:
                 except Exception as page_error:
                     logger.warning(f"Failed to OCR page {i}, skipping: {page_error}")
                     pages.append({"page_number": i, "text": ""})
+                    # Force garbage collection even on error
+                    gc.collect()
                     continue
             
             total_chars = sum(len(p["text"]) for p in pages)
