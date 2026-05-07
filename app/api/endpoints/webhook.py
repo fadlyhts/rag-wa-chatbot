@@ -298,7 +298,10 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
         waha = WAHAClient(session="default")
         
         # Send typing indicator
-        waha.send_typing(to=phone)
+        if phone_raw:
+            waha.send_typing(to=phone, chat_id=phone_raw)
+        else:
+            waha.send_typing(to=phone)
         logger.info(f"[{request_id}] Typing indicator sent")
         
         # Get database session
