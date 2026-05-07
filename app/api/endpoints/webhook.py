@@ -227,51 +227,55 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
 
 def format_sources_for_whatsapp(
     sources_metadata: list,
-    min_score: float = 0.75,
+    min_score: float = 0.0,
     max_sources: int = 3,
 ) -> str:
     """
     Format source documents into WhatsApp-friendly text.
-    Only shows the most relevant chunk per file to avoid clutter.
+    Groups multiple pages from the same file into a single line.
     """
-    # Pastikan diurutkan berdasarkan score tertinggi
-    sorted_sources = sorted(sources_metadata, key=lambda x: x.get('score', 0), reverse=True)
-    
     relevant = [
-        s for s in sorted_sources
+        s for s in sources_metadata
         if s.get('score', 0) >= min_score
     ]
     if not relevant:
         return ""
 
-    # Deduplicate berdasarkan file_name (hanya ambil halaman paling relevan per file)
-    seen_files = set()
-    unique = []
+    # Group by file_name
+    grouped_sources = {}
     for s in relevant:
-        file_name = s.get('file_name', '')
-        if file_name not in seen_files:
-            seen_files.add(file_name)
-            unique.append(s)
-        if len(unique) >= max_sources:
-            break
+        file_name = s.get('file_name') or s.get('title') or 'Document'
+        page = s.get('page_number')
+        pages = s.get('page_numbers')
+        url = s.get('url')
+        
+        if file_name not in grouped_sources:
+            grouped_sources[file_name] = {'pages': set(), 'url': url}
+            
+        if pages and isinstance(pages, list):
+            grouped_sources[file_name]['pages'].update(pages)
+        elif page:
+            grouped_sources[file_name]['pages'].add(page)
 
     lines = ["\n\n📚 *Sumber:*"]
-    for i, src in enumerate(unique, 1):
-        file_name = src.get('file_name') or src.get('title') or 'Document'
-        page = src.get('page_number')
-        pages = src.get('page_numbers')
-        url = src.get('url')
-
-        # Format string halaman (contoh: hal. 3 atau hal. 3-4)
-        page_str = ""
-        if pages and isinstance(pages, list) and len(pages) > 1:
-            page_str = f"{min(pages)}-{max(pages)}"
-        elif page:
-            page_str = str(page)
-
+    for i, (file_name, data) in enumerate(grouped_sources.items(), 1):
+        if i > max_sources:
+            break
+            
+        url = data['url']
+        page_set = sorted(list(data['pages']))
+        
         if url:
             lines.append(f"{i}. [{file_name}]({url})")
-        elif page_str:
+        elif page_set:
+            if len(page_set) == 1:
+                page_str = str(page_set[0])
+            elif len(page_set) == 2:
+                page_str = f"{page_set[0]}, {page_set[1]}"
+            else:
+                # If there are many pages, just show min and max to save space
+                page_str = f"{min(page_set)}-{max(page_set)}"
+                
             lines.append(f"{i}. {file_name} (hal. {page_str})")
         else:
             lines.append(f"{i}. {file_name}")
