@@ -1,7 +1,7 @@
 """Document management API endpoints"""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from pathlib import Path
@@ -9,8 +9,9 @@ import shutil
 import logging
 
 from app.database.session import get_db
-from app.security.auth import get_current_active_admin
+from app.security.auth import get_current_active_admin, decode_access_token
 from app.models.admin import Admin
+from app.models.document import Document
 from app.schemas.document import (
     DocumentListResponse,
     DocumentDetailResponse,
@@ -342,6 +343,89 @@ async def get_document_preview(
     except Exception as e:
         logger.error(f"Error getting preview for {document_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get preview: {str(e)}")
+
+
+@router.get("/documents/{document_id}/download")
+async def download_document(
+    document_id: int,
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Download the original document file.
+    
+    Supports authentication via:
+    - Query parameter `token` (for browser-initiated requests like PDF viewers)
+    - Standard Authorization Bearer header
+    
+    Returns the file with appropriate content-type.
+    """
+    # Authenticate: token query param is the primary method since
+    # vue-pdf-embed loads PDFs via URL and can't send custom headers
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Provide 'token' query parameter."
+        )
+    
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    admin = db.query(Admin).filter(Admin.username == username, Admin.is_active == True).first()
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    try:
+        document = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if not document.file_path:
+            raise HTTPException(status_code=404, detail="Document file path not available")
+        
+        file_path = Path(document.file_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Document file not found on disk")
+        
+        # Determine media type based on file extension
+        media_type_map = {
+            'pdf': 'application/pdf',
+            'txt': 'text/plain',
+            'md': 'text/markdown',
+            'csv': 'text/csv',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff',
+            'bmp': 'image/bmp',
+        }
+        
+        file_ext = document.file_type or file_path.suffix.lstrip('.')
+        media_type = media_type_map.get(file_ext.lower(), 'application/octet-stream')
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            filename=f"{document.title}.{file_ext}" if document.title else file_path.name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading document {document_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
 @router.get("/documents/{document_id}/chunks", response_model=List[DocumentChunkResponse])
