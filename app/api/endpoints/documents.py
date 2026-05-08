@@ -392,9 +392,15 @@ async def download_document(
         if not document.file_path:
             raise HTTPException(status_code=404, detail="Document file path not available")
         
+        # Resolve file path - try absolute first, then relative to CWD
         file_path = Path(document.file_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Document file not found on disk")
+            file_path = Path.cwd() / document.file_path
+            if not file_path.exists():
+                # Also try relative to the uploads directory
+                file_path = UPLOAD_DIR / Path(document.file_path).name
+                if not file_path.exists():
+                    raise HTTPException(status_code=404, detail="Document file not found on disk")
         
         # Determine media type based on file extension
         media_type_map = {
