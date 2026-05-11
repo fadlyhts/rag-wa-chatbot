@@ -155,17 +155,32 @@ class GeminiEmbeddingsService:
                 logger.info(f"Generating embeddings for {len(texts_to_generate)} texts (cached: {len(texts) - len(texts_to_generate)})")
                 
                 # Gemini batch API - process in chunks of 100 max
-                BATCH_SIZE = 100
+                # Use smaller batches with retry to handle rate limits
+                BATCH_SIZE = 20
                 for batch_start in range(0, len(texts_to_generate), BATCH_SIZE):
                     batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
                     batch_texts = texts_to_generate[batch_start:batch_end]
                     
-                    # Single API call for the batch!
-                    result = genai.embed_content(
-                        model=self.model_name,
-                        content=batch_texts,  # Pass all texts at once
-                        task_type="retrieval_document"
-                    )
+                    # Retry with exponential backoff for rate limits
+                    max_retries = 5
+                    for attempt in range(max_retries):
+                        try:
+                            import time
+                            result = genai.embed_content(
+                                model=self.model_name,
+                                content=batch_texts,
+                                task_type="retrieval_document"
+                            )
+                            break
+                        except Exception as retry_err:
+                            if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
+                                wait_time = (2 ** attempt) * 2  # 2, 4, 8, 16, 32 seconds
+                                logger.warning(f"Rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                                time.sleep(wait_time)
+                                if attempt == max_retries - 1:
+                                    raise
+                            else:
+                                raise
                     
                     # Extract embeddings and cache them
                     batch_embeddings = result['embedding'] if isinstance(result['embedding'][0], list) else [result['embedding']]
@@ -176,6 +191,11 @@ class GeminiEmbeddingsService:
                         self._save_to_cache(batch_texts[i], embedding)
                     
                     logger.info(f"Batch {batch_start//BATCH_SIZE + 1}: Generated {len(batch_embeddings)} embeddings")
+                    
+                    # Small delay between batches to avoid rate limits
+                    if batch_end < len(texts_to_generate):
+                        import time
+                        time.sleep(1)
             
             logger.info(f"Total: Generated {len(embeddings)} embeddings (new: {len(texts_to_generate)}, cached: {len(texts) - len(texts_to_generate)})")
             return embeddings
