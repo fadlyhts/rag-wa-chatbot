@@ -122,14 +122,35 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     
     logger.info(f"[{request_id}] Processing message from {phone}: {message_text[:50]}")
     
+    # Extract WhatsApp display name from _data.notifyName
+    whatsapp_name = None
+    _data = data.get("_data", {})
+    if isinstance(_data, dict):
+        whatsapp_name = _data.get("notifyName")
+    
+    # Resolve LID to real phone number if the sender uses @lid format
+    real_phone = phone
+    if "@lid" in phone_raw:
+        try:
+            from app.services.waha_client import WAHAClient
+            waha = WAHAClient(session="default")
+            resolved = waha.resolve_lid(phone)
+            if resolved:
+                logger.info(f"[{request_id}] Resolved LID {phone} -> {resolved}")
+                real_phone = resolved
+            else:
+                logger.info(f"[{request_id}] Could not resolve LID {phone}, using as-is")
+        except Exception as e:
+            logger.warning(f"[{request_id}] LID resolution failed: {e}, using LID as phone")
+    
     # Rate limit check
-    if not rate_limiter.allow_request(phone, limit=settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
-        logger.warning(f"[{request_id}] Rate limit exceeded for {phone}")
+    if not rate_limiter.allow_request(real_phone, limit=settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
+        logger.warning(f"[{request_id}] Rate limit exceeded for {real_phone}")
         return {"status": "rate_limited", "request_id": request_id}
     
     try:
         # Get or create user and conversation
-        user = get_or_create_user(phone, db)
+        user = get_or_create_user(real_phone, db, whatsapp_name=whatsapp_name)
         conversation = get_or_create_conversation(user.id, db)
         
         # Save user message
@@ -140,12 +161,12 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
             db=db
         )
         
-        logger.info(f"[{request_id}] Message saved from user {user.id} ({phone})")
+        logger.info(f"[{request_id}] Message saved from user {user.id} ({real_phone})")
         
         # Send auto-reply in background
         background_tasks.add_task(
             send_auto_reply,
-            phone=phone,
+            phone=real_phone,
             phone_raw=phone_raw,  # sertakan suffix @lid / @c.us
             user_message=message_text,
             request_id=request_id

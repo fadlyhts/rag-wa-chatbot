@@ -145,3 +145,46 @@ class WAHAClient:
             if hasattr(e, 'response') and e.response is not None:
                 logger.warning(f"Response: {e.response.text}")
             return {"status": "error"}
+    
+    def resolve_lid(self, lid: str) -> str | None:
+        """
+        Resolve a WhatsApp LID to a real phone number.
+        
+        WAHA API: GET /api/{session}/lids/{lid}
+        Returns the phone number (without @c.us suffix) or None if not found.
+        
+        Args:
+            lid: The LID number (e.g., "38457321738409") without @lid suffix
+            
+        Returns:
+            Phone number string (e.g., "6285156121852") or None
+        """
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
+        
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(
+                    f"{self.base_url}/api/{self.session}/lids/{lid}",
+                    headers=headers
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                # Response: {"lid": "38457321738409@lid", "pn": "6285156121852@c.us"}
+                pn = data.get("pn")
+                if pn:
+                    # Strip @c.us suffix to get clean phone number
+                    phone = pn.split("@")[0] if "@" in pn else pn
+                    logger.info(f"Resolved LID {lid} -> {phone}")
+                    return phone
+                
+                logger.info(f"LID {lid} could not be resolved (pn is null)")
+                return None
+                
+        except httpx.HTTPError as e:
+            logger.warning(f"Failed to resolve LID {lid}: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.warning(f"Response: {e.response.text}")
+            return None
