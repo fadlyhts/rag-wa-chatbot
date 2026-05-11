@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.api.endpoints import webhook, health, messages, stats, test, auth, documents, vector_db, dashboard
+from app.api.endpoints import webhook, health, messages, stats, test, auth, documents, vector_db, dashboard, users, conversations
 from app.api.endpoints import settings as settings_router
 from app.database.session import engine
 from app.database.base import Base
@@ -123,6 +123,8 @@ app.include_router(documents.router, prefix="/api", tags=["documents"])
 app.include_router(vector_db.router, prefix="/api", tags=["vector-database"])
 app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
+app.include_router(users.router, prefix="/api", tags=["users"])
+app.include_router(conversations.router, prefix="/api", tags=["conversations"])
 
 
 # Exception handlers
