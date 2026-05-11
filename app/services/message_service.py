@@ -12,23 +12,26 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def get_or_create_user(phone_number: str, db: Session) -> User:
+def get_or_create_user(phone_number: str, db: Session, whatsapp_name: str = None) -> User:
     """Get existing user or create new one"""
     user = db.query(User).filter(User.phone_number == phone_number).first()
     
     if not user:
         user = User(
             phone_number=phone_number,
+            whatsapp_name=whatsapp_name,
             language="en",
             created_at=datetime.utcnow()
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-        logger.info(f"Created new user: {user.id} ({phone_number})")
+        logger.info(f"Created new user: {user.id} ({phone_number}, name={whatsapp_name})")
     else:
-        # Update last active
+        # Update last active and name if available
         user.last_active = datetime.utcnow()
+        if whatsapp_name and not user.whatsapp_name:
+            user.whatsapp_name = whatsapp_name
         db.commit()
     
     return user
