@@ -151,6 +151,12 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     try:
         # Get or create user and conversation
         user = get_or_create_user(real_phone, db, whatsapp_name=whatsapp_name)
+        
+        # Check if user is blocked
+        if user.is_blocked:
+            logger.info(f"[{request_id}] User {real_phone} is blocked, ignoring message")
+            return {"status": "blocked", "request_id": request_id}
+        
         conversation = get_or_create_conversation(user.id, db)
         
         # Save user message
