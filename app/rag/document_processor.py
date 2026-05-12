@@ -168,7 +168,7 @@ class DocumentProcessor:
             info = pdfinfo_from_path(file_path)
             total_pages = info["Pages"]
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 72)")
+            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 200)")
             
             # Sangat Penting: Batasi Tesseract agar hanya menggunakan 1 thread CPU
             # Jika tidak dibatasi, Tesseract akan memakai semua core (100%) dan memicu crash/healthcheck timeout
