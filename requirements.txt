@@ -58,3 +58,23 @@ pytest-cov>=6.0.0
 black>=24.0.0
 flake8>=7.0.0
 mypy>=1.13.0
+
+# RAG Evaluation Dependencies
+# Install: pip install -r requirements-evaluation.txt
+
+# RAGAS - RAG Assessment Framework
+ragas>=0.1.0
+datasets>=2.14.0
+
+# BERTScore
+bert-score>=0.3.13
+transformers>=4.35.0
+
+# BLEU & ROUGE
+nltk>=3.8.0
+rouge-score>=0.1.2
+sacrebleu>=2.3.0
+
+# Utilities
+pandas>=2.0.0
+tqdm>=4.66.0
