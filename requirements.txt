@@ -18,7 +18,7 @@ langchain-openai>=0.2.0
 langchain-google-genai>=2.0.0
 qdrant-client>=1.11.3
 openai>=1.54.0
-google-generativeai>=0.3.0
+google-genai>=1.0.0
 
 # Document Processing
 pypdf2>=3.0.1

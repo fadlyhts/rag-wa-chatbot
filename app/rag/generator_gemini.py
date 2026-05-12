@@ -1,7 +1,8 @@
-"""Google Gemini LLM generator"""
+"""Google Gemini LLM generator (using google-genai SDK)"""
 
 from typing import List, Dict, Any, Optional, AsyncIterator
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import logging
 from app.rag.config import rag_config
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -10,13 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiGenerator:
-    """Gemini-based response generator"""
+    """Gemini-based response generator (new google-genai SDK)"""
     
     def __init__(self):
-        # Configure Gemini
-        genai.configure(api_key=rag_config.google_api_key)
+        # Initialize the new genai client
+        self.client = genai.Client(api_key=rag_config.google_api_key)
         
-        # Ensure model name doesn't have "models/" prefix
+        # Model name (without "models/" prefix)
         model_name = rag_config.gemini_model
         if model_name.startswith("models/"):
             model_name = model_name.replace("models/", "")
@@ -26,37 +27,28 @@ class GeminiGenerator:
         self.temperature = rag_config.gemini_temperature
         
         logger.info(f"Initializing Gemini generator with model: {self.model_name}")
-        
-        # Initialize model
-        generation_config = genai.GenerationConfig(
-            temperature=self.temperature,
-            max_output_tokens=self.max_tokens,
-        )
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            generation_config=generation_config
-        )
     
     def count_tokens(self, text: str) -> int:
         """Count tokens in text"""
         try:
-            result = self.model.count_tokens(text)
-            return result.total_tokens
+            response = self.client.models.count_tokens(
+                model=self.model_name,
+                contents=text,
+            )
+            return response.total_tokens
         except Exception as e:
             logger.warning(f"Error counting tokens: {e}")
-            # Rough estimate: 1 token ≈ 4 characters
             return len(text) // 4
     
-    def _convert_messages_to_gemini_format(self, messages: List[Dict[str, str]]) -> tuple:
+    def _build_contents_and_config(self, messages: List[Dict[str, str]], temperature: Optional[float], max_tokens: Optional[int]):
         """
-        Convert OpenAI-style messages to Gemini format
+        Convert OpenAI-style messages to google-genai format.
         
-        Gemini uses a different format:
-        - System message goes in the model config
-        - User/assistant messages become the chat history
+        Returns:
+            tuple: (contents, config)
         """
         system_instruction = None
-        chat_history = []
+        contents = []
         
         for msg in messages:
             role = msg.get("role", "user")
@@ -65,11 +57,17 @@ class GeminiGenerator:
             if role == "system":
                 system_instruction = content
             elif role == "user":
-                chat_history.append({"role": "user", "parts": [content]})
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=content)]))
             elif role == "assistant":
-                chat_history.append({"role": "model", "parts": [content]})
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=content)]))
         
-        return system_instruction, chat_history
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=temperature if temperature is not None else self.temperature,
+            max_output_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+        )
+        
+        return contents, config
     
     def generate(
         self,
@@ -90,53 +88,25 @@ class GeminiGenerator:
             Dict with 'content', 'tokens_used', and 'model' keys
         """
         try:
-            # Convert messages to Gemini format
-            system_instruction, chat_history = self._convert_messages_to_gemini_format(messages)
+            contents, config = self._build_contents_and_config(messages, temperature, max_tokens)
             
-            # Update generation config if overrides provided
-            generation_config = genai.GenerationConfig(
-                temperature=temperature if temperature is not None else self.temperature,
-                max_output_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
             )
-            
-            # Create model with system instruction if provided
-            if system_instruction:
-                model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=generation_config,
-                    system_instruction=system_instruction
-                )
-            else:
-                model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=generation_config
-                )
-            
-            # Get the last user message
-            user_message = None
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    user_message = msg.get("content")
-                    break
-            
-            if not user_message:
-                raise ValueError("No user message found in messages")
-            
-            # Generate response
-            if len(chat_history) > 1:
-                # Use chat if there's history
-                chat = model.start_chat(history=chat_history[:-1])
-                response = chat.send_message(user_message)
-            else:
-                # Direct generation for single message
-                response = model.generate_content(user_message)
             
             content = response.text
             
-            # Count tokens
-            prompt_tokens = sum(self.count_tokens(msg.get("content", "")) for msg in messages)
-            completion_tokens = self.count_tokens(content)
-            total_tokens = prompt_tokens + completion_tokens
+            # Get token usage from response metadata
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+            
+            if response.usage_metadata:
+                prompt_tokens = response.usage_metadata.prompt_token_count or 0
+                completion_tokens = response.usage_metadata.candidates_token_count or 0
+                total_tokens = response.usage_metadata.total_token_count or 0
             
             logger.info(f"Gemini generation: {total_tokens} tokens used")
             
@@ -159,13 +129,38 @@ class GeminiGenerator:
         max_tokens: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """
-        Generate response asynchronously
-        
-        Note: Gemini SDK doesn't have native async support yet,
-        so we wrap the sync call
-        """
-        return self.generate(messages, temperature, max_tokens, **kwargs)
+        """Generate response asynchronously"""
+        try:
+            contents, config = self._build_contents_and_config(messages, temperature, max_tokens)
+            
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+            
+            content = response.text
+            
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+            
+            if response.usage_metadata:
+                prompt_tokens = response.usage_metadata.prompt_token_count or 0
+                completion_tokens = response.usage_metadata.candidates_token_count or 0
+                total_tokens = response.usage_metadata.total_token_count or 0
+            
+            return {
+                "content": content,
+                "tokens_used": total_tokens,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "model": self.model_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Gemini async generation error: {e}")
+            raise
     
     async def generate_stream(
         self,
@@ -174,59 +169,15 @@ class GeminiGenerator:
         max_tokens: Optional[int] = None,
         **kwargs
     ) -> AsyncIterator[str]:
-        """
-        Generate response as a stream
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-            temperature: Sampling temperature (0-1)
-            max_tokens: Maximum tokens in response
-            
-        Yields:
-            Text chunks as they are generated
-        """
+        """Generate response as a stream"""
         try:
-            # Convert messages to Gemini format
-            system_instruction, chat_history = self._convert_messages_to_gemini_format(messages)
+            contents, config = self._build_contents_and_config(messages, temperature, max_tokens)
             
-            # Update generation config
-            generation_config = genai.GenerationConfig(
-                temperature=temperature if temperature is not None else self.temperature,
-                max_output_tokens=max_tokens if max_tokens is not None else self.max_tokens,
-            )
-            
-            # Create model
-            if system_instruction:
-                model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=generation_config,
-                    system_instruction=system_instruction
-                )
-            else:
-                model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=generation_config
-                )
-            
-            # Get the last user message
-            user_message = None
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    user_message = msg.get("content")
-                    break
-            
-            if not user_message:
-                raise ValueError("No user message found in messages")
-            
-            # Generate streaming response
-            if len(chat_history) > 1:
-                chat = model.start_chat(history=chat_history[:-1])
-                response = chat.send_message(user_message, stream=True)
-            else:
-                response = model.generate_content(user_message, stream=True)
-            
-            # Stream chunks
-            for chunk in response:
+            async for chunk in self.client.aio.models.generate_content_stream(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            ):
                 if chunk.text:
                     yield chunk.text
             
@@ -236,24 +187,15 @@ class GeminiGenerator:
     
     def format_for_whatsapp(self, text: str, max_length: int = 4096) -> List[str]:
         """
-        Format response text for WhatsApp
-        Splits long messages into multiple parts if needed
-        
-        Args:
-            text: Response text to format
-            max_length: Maximum length per message (WhatsApp limit is 4096)
-            
-        Returns:
-            List of message strings
+        Format response text for WhatsApp.
+        Splits long messages into multiple parts if needed.
         """
         if len(text) <= max_length:
             return [text]
         
-        # Split into chunks
         messages = []
         current_message = ""
         
-        # Split by paragraphs first
         paragraphs = text.split('\n\n')
         
         for para in paragraphs:
@@ -264,7 +206,6 @@ class GeminiGenerator:
                     messages.append(current_message.strip())
                     current_message = para + '\n\n'
                 else:
-                    # Paragraph itself is too long, split by sentences
                     sentences = para.split('. ')
                     for sentence in sentences:
                         if len(current_message) + len(sentence) + 2 <= max_length:
@@ -291,7 +232,6 @@ class GeminiLCELWrapper:
     """
 
     def invoke(self, messages: list) -> str:
-        # Convert LangChain messages to dict format used by GeminiGenerator
         converted: List[Dict[str, str]] = []
         for msg in messages:
             if isinstance(msg, SystemMessage):

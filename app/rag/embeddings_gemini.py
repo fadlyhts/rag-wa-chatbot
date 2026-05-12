@@ -1,27 +1,29 @@
-"""Google Gemini embeddings service"""
+"""Google Gemini embeddings service (using google-genai SDK)"""
 
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import redis
 import json
 import hashlib
 import logging
+import time
 from app.rag.config import rag_config
 
 logger = logging.getLogger(__name__)
 
 
 class GeminiEmbeddingsService:
-    """Service for generating embeddings using Google Gemini"""
+    """Service for generating embeddings using Google Gemini (new google-genai SDK)"""
     
     def __init__(self):
-        # Configure Gemini
-        genai.configure(api_key=rag_config.google_api_key)
+        # Initialize the new genai client
+        self.client = genai.Client(api_key=rag_config.google_api_key)
         
-        # Ensure embedding model has "models/" prefix
+        # Model name (without "models/" prefix for new SDK)
         model_name = rag_config.gemini_embedding_model
-        if not model_name.startswith("models/"):
-            model_name = f"models/{model_name}"
+        if model_name.startswith("models/"):
+            model_name = model_name.replace("models/", "")
         self.model_name = model_name
         
         logger.info(f"Initializing Gemini embeddings with model: {self.model_name}")
@@ -32,7 +34,7 @@ class GeminiEmbeddingsService:
             try:
                 self.redis_client = redis.from_url(
                     rag_config.redis_url,
-                    decode_responses=False  # Store bytes for embeddings
+                    decode_responses=False
                 )
                 logger.info("Redis cache enabled for embeddings")
             except Exception as e:
@@ -52,7 +54,6 @@ class GeminiEmbeddingsService:
             key = self._get_cache_key(text)
             cached = self.redis_client.get(key)
             if cached:
-                logger.debug("Cache hit for embedding")
                 return json.loads(cached)
         except Exception as e:
             logger.warning(f"Cache retrieval error: {e}")
@@ -71,7 +72,6 @@ class GeminiEmbeddingsService:
                 rag_config.cache_ttl,
                 json.dumps(embedding)
             )
-            logger.debug("Cached embedding")
         except Exception as e:
             logger.warning(f"Cache save error: {e}")
     
@@ -85,23 +85,18 @@ class GeminiEmbeddingsService:
         Returns:
             List of floats representing the embedding vector
         """
-        # Check cache first
         cached = self._get_from_cache(text)
         if cached:
             return cached
         
         try:
-            result = genai.embed_content(
+            response = self.client.models.embed_content(
                 model=self.model_name,
-                content=text,
-                task_type="retrieval_document"
+                contents=text,
             )
-            embedding = result['embedding']
+            embedding = response.embeddings[0].values
             
-            # Cache the result
             self._save_to_cache(text, embedding)
-            
-            logger.debug(f"Generated Gemini embedding for text of length {len(text)}")
             return embedding
             
         except Exception as e:
@@ -109,17 +104,7 @@ class GeminiEmbeddingsService:
             raise
     
     async def generate_embedding_async(self, text: str) -> List[float]:
-        """
-        Generate embedding asynchronously (Gemini SDK is sync, so we wrap it)
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats representing the embedding vector
-        """
-        # For now, Gemini SDK doesn't have native async support
-        # We'll use the sync version
+        """Generate embedding asynchronously"""
         return self.generate_embedding(text)
     
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
@@ -140,22 +125,20 @@ class GeminiEmbeddingsService:
             texts_to_generate = []
             indices_to_generate = []
             
-            # First, check cache for all texts
+            # Check cache for all texts
             for i, text in enumerate(texts):
                 cached = self._get_from_cache(text)
                 if cached:
                     embeddings.append(cached)
                 else:
-                    embeddings.append(None)  # Placeholder
+                    embeddings.append(None)
                     texts_to_generate.append(text)
                     indices_to_generate.append(i)
             
-            # If we have texts to generate, use TRUE batch API (one call)
             if texts_to_generate:
                 logger.info(f"Generating embeddings for {len(texts_to_generate)} texts (cached: {len(texts) - len(texts_to_generate)})")
                 
-                # Gemini batch API - process in chunks of 100 max
-                # Use smaller batches with retry to handle rate limits
+                # Process in smaller batches with retry for rate limits
                 BATCH_SIZE = 20
                 for batch_start in range(0, len(texts_to_generate), BATCH_SIZE):
                     batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
@@ -165,16 +148,14 @@ class GeminiEmbeddingsService:
                     max_retries = 5
                     for attempt in range(max_retries):
                         try:
-                            import time
-                            result = genai.embed_content(
+                            response = self.client.models.embed_content(
                                 model=self.model_name,
-                                content=batch_texts,
-                                task_type="retrieval_document"
+                                contents=batch_texts,
                             )
                             break
                         except Exception as retry_err:
                             if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
-                                wait_time = (2 ** attempt) * 2  # 2, 4, 8, 16, 32 seconds
+                                wait_time = (2 ** attempt) * 2
                                 logger.warning(f"Rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                                 time.sleep(wait_time)
                                 if attempt == max_retries - 1:
@@ -182,8 +163,8 @@ class GeminiEmbeddingsService:
                             else:
                                 raise
                     
-                    # Extract embeddings and cache them
-                    batch_embeddings = result['embedding'] if isinstance(result['embedding'][0], list) else [result['embedding']]
+                    # Extract embeddings from response
+                    batch_embeddings = [emb.values for emb in response.embeddings]
                     
                     for i, embedding in enumerate(batch_embeddings):
                         original_index = indices_to_generate[batch_start + i]
@@ -194,7 +175,6 @@ class GeminiEmbeddingsService:
                     
                     # Small delay between batches to avoid rate limits
                     if batch_end < len(texts_to_generate):
-                        import time
                         time.sleep(1)
             
             logger.info(f"Total: Generated {len(embeddings)} embeddings (new: {len(texts_to_generate)}, cached: {len(texts) - len(texts_to_generate)})")
@@ -205,15 +185,7 @@ class GeminiEmbeddingsService:
             raise
     
     async def generate_embeddings_batch_async(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts in batch (async wrapper)
-        
-        Args:
-            texts: List of texts to embed
-            
-        Returns:
-            List of embedding vectors
-        """
+        """Generate embeddings for multiple texts in batch (async wrapper)"""
         return self.generate_embeddings_batch(texts)
 
 

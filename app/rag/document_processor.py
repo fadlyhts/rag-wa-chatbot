@@ -186,7 +186,7 @@ class DocumentProcessor:
                         # paths_only=True means it writes direct to disk and returns paths, NOT loading into Python RAM
                         image_paths = convert_from_path(
                             file_path, 
-                            dpi=72, 
+                            dpi=200, 
                             first_page=i, 
                             last_page=i, 
                             output_folder=tmp_dir,
