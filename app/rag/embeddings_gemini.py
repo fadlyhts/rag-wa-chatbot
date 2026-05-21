@@ -144,32 +144,37 @@ class GeminiEmbeddingsService:
                     batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
                     batch_texts = texts_to_generate[batch_start:batch_end]
                     
-                    # Retry with exponential backoff for rate limits
-                    max_retries = 5
-                    for attempt in range(max_retries):
-                        try:
-                            response = self.client.models.embed_content(
-                                model=self.model_name,
-                                contents=batch_texts,
-                            )
-                            break
-                        except Exception as retry_err:
-                            if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
-                                wait_time = (2 ** attempt) * 2
-                                logger.warning(f"Rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                                time.sleep(wait_time)
-                                if attempt == max_retries - 1:
+                    # Generate embeddings one by one within each batch
+                    # Gemini embed_content treats list input as a single multi-part document,
+                    # so we must call it per-text to get individual embeddings
+                    batch_embeddings = []
+                    for text in batch_texts:
+                        # Retry with exponential backoff for rate limits
+                        max_retries = 5
+                        for attempt in range(max_retries):
+                            try:
+                                response = self.client.models.embed_content(
+                                    model=self.model_name,
+                                    contents=text,
+                                )
+                                batch_embeddings.append(response.embeddings[0].values)
+                                break
+                            except Exception as retry_err:
+                                if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
+                                    wait_time = (2 ** attempt) * 2
+                                    logger.warning(f"Rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(wait_time)
+                                    if attempt == max_retries - 1:
+                                        logger.error(f"Failed to embed text after {max_retries} retries")
+                                        batch_embeddings.append(None)
+                                else:
                                     raise
-                            else:
-                                raise
-                    
-                    # Extract embeddings from response
-                    batch_embeddings = [emb.values for emb in response.embeddings]
                     
                     for i, embedding in enumerate(batch_embeddings):
                         original_index = indices_to_generate[batch_start + i]
                         embeddings[original_index] = embedding
-                        self._save_to_cache(batch_texts[i], embedding)
+                        if embedding is not None:
+                            self._save_to_cache(batch_texts[i], embedding)
                     
                     logger.info(f"Batch {batch_start//BATCH_SIZE + 1}: Generated {len(batch_embeddings)} embeddings")
                     

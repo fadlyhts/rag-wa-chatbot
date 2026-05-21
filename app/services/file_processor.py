@@ -144,6 +144,17 @@ class FileProcessor:
             embeddings = await self.embeddings.generate_embeddings_batch_async(chunk_texts)
             logger.info(f"Successfully generated {len(embeddings)} embeddings")
             
+            # Filter out chunks with failed (None) embeddings
+            valid_indices = [i for i, emb in enumerate(embeddings) if emb is not None]
+            if len(valid_indices) < len(embeddings):
+                logger.warning(f"Skipping {len(embeddings) - len(valid_indices)} chunks with failed embeddings")
+                page_chunks = [page_chunks[i] for i in valid_indices]
+                embeddings = [embeddings[i] for i in valid_indices]
+                chunk_texts = [chunk_texts[i] for i in valid_indices]
+            
+            if not embeddings:
+                raise Exception("All embeddings failed to generate")
+            
             # Prepare Qdrant payloads with page metadata
             chunk_ids = [str(uuid.uuid4()) for _ in range(len(page_chunks))]
             
