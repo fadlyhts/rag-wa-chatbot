@@ -134,10 +134,11 @@ class FileProcessor:
             if not full_text.strip():
                 raise Exception("Document is empty after extraction")
             
-            # Chunk text while preserving page numbers
-            page_chunks = self.document_processor.chunk_text_with_pages(pages)
+            # Chunk text using heading-aware semantic chunking
+            # Falls back to sentence-based chunking for non-structured docs
+            page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
             chunk_texts = [c["text"] for c in page_chunks]
-            logger.info(f"Split into {len(page_chunks)} page-aware chunks")
+            logger.info(f"Split into {len(page_chunks)} semantic chunks")
             
             # Generate embeddings
             logger.info(f"Starting embedding generation for {len(chunk_texts)} chunks...")
@@ -173,7 +174,10 @@ class FileProcessor:
                     'total_chunks': len(page_chunks),
                     'page_number': chunk_info["page_number"],
                     'page_numbers': chunk_info["page_numbers"],
-                    'category_id': doc.category_id
+                    'category_id': doc.category_id,
+                    # Heading metadata from semantic chunking
+                    'heading': chunk_info.get("heading"),
+                    'parent_heading': chunk_info.get("parent_heading"),
                 }
                 payloads.append(payload)
             

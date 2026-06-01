@@ -1,10 +1,11 @@
 """Document processing and ingestion"""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import os
 import hashlib
 import logging
 import gc
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -52,6 +53,139 @@ class DocumentProcessor:
             # Rough estimate
             return len(text) // 4
     
+    # ─── Heading Detection for Indonesian SOP Documents ─────────────────
+    # Patterns ordered from most specific (deepest heading) to broadest.
+    # Each tuple: (compiled_regex, heading_level)
+    #   level 1 = top chapter,  level 2 = section,  level 3+ = sub-section
+    HEADING_PATTERNS: List[Tuple[re.Pattern, int]] = [
+        # "BAB I. Pendahuluan" or "BAB II PENDAHULUAN"
+        (re.compile(r'^(BAB\s+[IVXLC]+)\.?\s*(.*)', re.IGNORECASE), 1),
+        # "1. PERSIAPAN KEBUN PERBANYAKAN" (single digit + ALL CAPS title)
+        (re.compile(r'^(\d+)\.\s+([A-Z][A-Z\s]{3,})$'), 1),
+        # "1.1.1. Sub-sub-heading" (three-level numbering)
+        (re.compile(r'^(\d+\.\d+\.\d+)\.?\s+(.+)'), 3),
+        # "1.1. Definisi" or "1.1 Definisi" (two-level numbering)
+        (re.compile(r'^(\d+\.\d+)\.?\s+(.+)'), 2),
+        # "A. Major heading" (uppercase letter)
+        (re.compile(r'^([A-Z])\.\s+(.{3,})'), 2),
+        # "a. Penentuan blok kebun" (lowercase letter sub-item)
+        (re.compile(r'^([a-z])\.\s+(.{3,})'), 3),
+    ]
+
+    def _detect_heading(self, line: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if a line is a heading. Returns heading info or None.
+        
+        Returns:
+            {"number": "1.1", "title": "Definisi", "level": 2, "full": "1.1. Definisi"}
+            or None if not a heading
+        """
+        stripped = line.strip()
+        if not stripped or len(stripped) < 2:
+            return None
+        
+        for pattern, level in self.HEADING_PATTERNS:
+            match = pattern.match(stripped)
+            if match:
+                number = match.group(1).strip()
+                title = match.group(2).strip() if match.lastindex >= 2 else ""
+                return {
+                    "number": number,
+                    "title": title,
+                    "level": level,
+                    "full": stripped,
+                }
+        return None
+
+    def _parse_sections(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Parse text into a flat list of sections delimited by headings.
+        
+        Each section dict:
+            {
+                "heading": "1.1. Definisi" | None (for preamble text),
+                "heading_number": "1.1" | None,
+                "heading_level": 2 | None,
+                "body": "Persiapan kebun perbanyakan adalah ...",
+            }
+        """
+        lines = text.split('\n')
+        sections: List[Dict[str, Any]] = []
+        current_heading: Optional[Dict[str, Any]] = None
+        body_lines: List[str] = []
+
+        for line in lines:
+            heading_info = self._detect_heading(line)
+            if heading_info:
+                # Flush the previous section
+                body_text = '\n'.join(body_lines).strip()
+                if body_text or current_heading:
+                    sections.append({
+                        "heading": current_heading["full"] if current_heading else None,
+                        "heading_number": current_heading["number"] if current_heading else None,
+                        "heading_level": current_heading["level"] if current_heading else None,
+                        "body": body_text,
+                    })
+                current_heading = heading_info
+                body_lines = []
+            else:
+                body_lines.append(line)
+
+        # Flush the last section
+        body_text = '\n'.join(body_lines).strip()
+        if body_text or current_heading:
+            sections.append({
+                "heading": current_heading["full"] if current_heading else None,
+                "heading_number": current_heading["number"] if current_heading else None,
+                "heading_level": current_heading["level"] if current_heading else None,
+                "body": body_text,
+            })
+
+        return sections
+
+    def _build_parent_map(self, sections: List[Dict[str, Any]]) -> Dict[int, str]:
+        """
+        Build a mapping: section_index -> parent heading string.
+        A "parent" is the nearest preceding section with a *lower* heading level.
+        """
+        parent_map: Dict[int, str] = {}
+        # Stack of (level, heading_full_text)
+        heading_stack: List[Tuple[int, str]] = []
+
+        for idx, sec in enumerate(sections):
+            level = sec.get("heading_level")
+            heading = sec.get("heading")
+
+            if level is not None and heading is not None:
+                # Pop everything with level >= current (siblings/children)
+                while heading_stack and heading_stack[-1][0] >= level:
+                    heading_stack.pop()
+                # The top of the stack is the parent
+                if heading_stack:
+                    parent_map[idx] = heading_stack[-1][1]
+                # Push current onto stack
+                heading_stack.append((level, heading))
+            else:
+                # No heading (preamble) — parent is whatever is on stack
+                if heading_stack:
+                    parent_map[idx] = heading_stack[-1][1]
+
+        return parent_map
+
+    def _is_structured_document(self, text: str, min_headings: int = 3) -> bool:
+        """
+        Quick heuristic: does this text have enough heading-like lines
+        to justify semantic chunking?
+        """
+        count = 0
+        for line in text.split('\n'):
+            if self._detect_heading(line):
+                count += 1
+                if count >= min_headings:
+                    return True
+        return False
+
+
     def read_file(self, file_path: str) -> str:
         """
         Read file content based on extension
@@ -381,6 +515,245 @@ class DocumentProcessor:
         logger.info(
             f"Split {len(pages)} pages into {len(chunks)} page-aware chunks "
             f"(size: {chunk_size}, overlap: {overlap})"
+        )
+        return chunks
+
+    def chunk_text_semantic_with_pages(
+        self,
+        pages: List[Dict[str, Any]],
+        chunk_size: Optional[int] = None,
+        overlap: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Heading-aware semantic chunking for structured documents (SOP, manuals).
+        
+        Detects heading patterns (1., 1.1., a., BAB, etc.) and uses them as
+        chunk boundaries. Each chunk contains a coherent section with its heading
+        and parent heading context.
+        
+        Falls back to sentence-based chunking for non-structured documents.
+        
+        Args:
+            pages: List of {"page_number": int, "text": str}
+            chunk_size: Max chunk size in tokens
+            overlap: Overlap in tokens (used for fallback)
+            
+        Returns:
+            List of {
+                "text": str,
+                "page_number": int,
+                "page_numbers": List[int],
+                "heading": Optional[str],
+                "parent_heading": Optional[str],
+            }
+        """
+        chunk_size = chunk_size or self.chunk_size
+        overlap = overlap or self.chunk_overlap
+        
+        # Combine all page text while tracking page boundaries
+        full_text = "\n".join(p["text"] for p in pages)
+        
+        # Check if the document has enough headings for semantic chunking
+        if not self._is_structured_document(full_text):
+            logger.info("Document is not structured — falling back to sentence-based chunking")
+            fallback = self.chunk_text_with_pages(pages, chunk_size, overlap)
+            # Add empty heading fields for consistent interface
+            for chunk in fallback:
+                chunk.setdefault("heading", None)
+                chunk.setdefault("parent_heading", None)
+            return fallback
+        
+        logger.info("Document has structured headings — using semantic chunking")
+        
+        # Build a character-offset → page_number map
+        # This lets us figure out which page a section belongs to.
+        page_char_offsets: List[Tuple[int, int, int]] = []  # (start, end, page_num)
+        offset = 0
+        for p in pages:
+            text = p["text"]
+            page_char_offsets.append((offset, offset + len(text), p["page_number"]))
+            offset += len(text) + 1  # +1 for the '\n' joiner
+        
+        def _get_pages_for_range(start: int, end: int) -> List[int]:
+            """Given character range in full_text, return page numbers."""
+            result = []
+            for pstart, pend, pnum in page_char_offsets:
+                if pstart < end and pend > start:
+                    result.append(pnum)
+            return sorted(set(result)) if result else [1]
+        
+        # Parse into sections
+        sections = self._parse_sections(full_text)
+        parent_map = self._build_parent_map(sections)
+        
+        logger.info(f"Parsed {len(sections)} sections from document")
+        
+        # Compute section character offsets for page mapping
+        section_char_starts: List[int] = []
+        search_from = 0
+        for sec in sections:
+            # The section's heading (if any) appears first in full_text
+            heading_text = sec["heading"] or ""
+            body_text = sec["body"] or ""
+            
+            # Find the section start in the original text
+            search_target = heading_text if heading_text else body_text[:50]
+            if search_target:
+                pos = full_text.find(search_target, search_from)
+                if pos == -1:
+                    pos = search_from
+                section_char_starts.append(pos)
+                # Move search forward past this section's content
+                section_len = len(heading_text) + len(body_text) + 2
+                search_from = pos + max(section_len, 1)
+            else:
+                section_char_starts.append(search_from)
+        
+        # Build chunks by merging/splitting sections to fit chunk_size
+        chunks: List[Dict[str, Any]] = []
+        
+        # Buffer for accumulating small consecutive sections
+        buf_sections: List[int] = []  # indices into sections[]
+        buf_tokens: int = 0
+        
+        def _section_text(idx: int) -> str:
+            """Build the full text for a section: heading + body."""
+            sec = sections[idx]
+            parts = []
+            if sec["heading"]:
+                parts.append(sec["heading"])
+            if sec["body"]:
+                parts.append(sec["body"])
+            return "\n".join(parts)
+        
+        def _flush_buffer():
+            """Emit the buffered sections as a single chunk."""
+            nonlocal buf_sections, buf_tokens
+            if not buf_sections:
+                return
+            
+            # Build chunk text
+            chunk_parts = [_section_text(i) for i in buf_sections]
+            chunk_text = "\n\n".join(chunk_parts).strip()
+            
+            if not chunk_text:
+                buf_sections = []
+                buf_tokens = 0
+                return
+            
+            # Determine heading & parent from the first section in buffer
+            first_sec = sections[buf_sections[0]]
+            heading = first_sec["heading"]
+            parent = parent_map.get(buf_sections[0])
+            
+            # Determine page numbers
+            first_start = section_char_starts[buf_sections[0]]
+            last_idx = buf_sections[-1]
+            last_end = section_char_starts[last_idx] + len(_section_text(last_idx))
+            chunk_pages = _get_pages_for_range(first_start, last_end)
+            
+            chunks.append({
+                "text": chunk_text,
+                "page_number": chunk_pages[0],
+                "page_numbers": chunk_pages,
+                "heading": heading,
+                "parent_heading": parent,
+            })
+            
+            buf_sections = []
+            buf_tokens = 0
+        
+        def _split_large_section(idx: int):
+            """
+            When a single section exceeds chunk_size, split its body by
+            paragraphs and emit multiple chunks, each prefixed with the
+            section heading for context.
+            """
+            sec = sections[idx]
+            heading = sec["heading"] or ""
+            parent = parent_map.get(idx)
+            body = sec["body"] or ""
+            
+            # Split by double-newline (paragraphs) first, then single newline
+            paragraphs = re.split(r'\n\s*\n', body)
+            if len(paragraphs) <= 1:
+                paragraphs = body.split('\n')
+            
+            heading_prefix = f"{heading}\n" if heading else ""
+            heading_tokens = self.count_tokens(heading_prefix)
+            
+            current_parts: List[str] = []
+            current_tokens = heading_tokens
+            
+            sec_start = section_char_starts[idx]
+            
+            for para in paragraphs:
+                para = para.strip()
+                if not para:
+                    continue
+                para_tokens = self.count_tokens(para)
+                
+                if current_tokens + para_tokens <= chunk_size:
+                    current_parts.append(para)
+                    current_tokens += para_tokens
+                else:
+                    # Emit current accumulated paragraphs
+                    if current_parts:
+                        chunk_text = heading_prefix + "\n".join(current_parts)
+                        chunk_pages = _get_pages_for_range(
+                            sec_start, sec_start + len(chunk_text)
+                        )
+                        chunks.append({
+                            "text": chunk_text.strip(),
+                            "page_number": chunk_pages[0],
+                            "page_numbers": chunk_pages,
+                            "heading": heading or None,
+                            "parent_heading": parent,
+                        })
+                    
+                    # Start new accumulation with this paragraph
+                    current_parts = [para]
+                    current_tokens = heading_tokens + para_tokens
+            
+            # Flush remaining
+            if current_parts:
+                chunk_text = heading_prefix + "\n".join(current_parts)
+                chunk_pages = _get_pages_for_range(
+                    sec_start, sec_start + len(chunk_text)
+                )
+                chunks.append({
+                    "text": chunk_text.strip(),
+                    "page_number": chunk_pages[0],
+                    "page_numbers": chunk_pages,
+                    "heading": heading or None,
+                    "parent_heading": parent,
+                })
+        
+        # Main loop: iterate sections and decide merge / emit / split
+        for idx in range(len(sections)):
+            sec_text = _section_text(idx)
+            sec_tokens = self.count_tokens(sec_text)
+            
+            if sec_tokens > chunk_size:
+                # Flush buffer first, then split the oversized section
+                _flush_buffer()
+                _split_large_section(idx)
+            elif buf_tokens + sec_tokens <= chunk_size:
+                # Fits in current buffer — accumulate
+                buf_sections.append(idx)
+                buf_tokens += sec_tokens
+            else:
+                # Would exceed — flush buffer, start new
+                _flush_buffer()
+                buf_sections = [idx]
+                buf_tokens = sec_tokens
+        
+        # Flush any remaining buffer
+        _flush_buffer()
+        
+        logger.info(
+            f"Semantic chunking: {len(sections)} sections → {len(chunks)} chunks "
+            f"(max size: {chunk_size} tokens)"
         )
         return chunks
 
