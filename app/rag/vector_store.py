@@ -167,8 +167,10 @@ class VectorStore:
         try:
             self._ensure_initialized()
             
-            limit = limit or rag_config.top_k
-            score_threshold = score_threshold or rag_config.min_score
+            if limit is None:
+                limit = rag_config.top_k
+            if score_threshold is None:
+                score_threshold = rag_config.min_score
             
             # Build filter if provided
             query_filter = None

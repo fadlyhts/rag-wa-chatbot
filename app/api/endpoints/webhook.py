@@ -295,14 +295,7 @@ def format_sources_for_whatsapp(
         if url:
             lines.append(f"{i}. [{file_name}]({url})")
         elif page_set:
-            if len(page_set) == 1:
-                page_str = str(page_set[0])
-            elif len(page_set) == 2:
-                page_str = f"{page_set[0]}, {page_set[1]}"
-            else:
-                # If there are many pages, just show min and max to save space
-                page_str = f"{min(page_set)}-{max(page_set)}"
-                
+            page_str = ", ".join(str(p) for p in page_set)
             lines.append(f"{i}. {file_name} (hal. {page_str})")
         else:
             lines.append(f"{i}. {file_name}")
@@ -369,12 +362,13 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
                 logger.warning(f"[{request_id}] No source documents retrieved")
             
             # Append source references to reply (only if relevant)
-            sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.75)
+            # Gemini embeddings typically have lower dot-product/cosine similarity baseline than OpenAI
+            sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.60)
             if sources_text:
                 reply_text = reply_text + sources_text
                 logger.info(f"[{request_id}] Sources appended to reply")
             else:
-                logger.info(f"[{request_id}] No high-relevance sources to append (threshold=0.75)")
+                logger.info(f"[{request_id}] No high-relevance sources to append (threshold=0.60)")
             
             # Use phone_raw (@lid/@c.us) as chat_id for newer WhatsApp accounts
             chat_id = phone_raw if phone_raw else None

@@ -53,6 +53,93 @@ class DocumentProcessor:
             # Rough estimate
             return len(text) // 4
     
+    # ─── Boilerplate / Cover-Page Noise Patterns ────────────────────────
+    # Only GENERIC patterns that apply to ANY document type.
+    # Content-specific phrases (company names, director titles) are NOT
+    # listed here — instead, the preamble-truncation strategy below handles
+    # them structurally by discarding all text before the first heading.
+    _BOILERPLATE_PATTERNS: List[re.Pattern] = [
+        # Phone / fax numbers (with or without country code)
+        re.compile(r'(?:Telp|Tel|Fax|Faks|Phone)[\s.:]*[\(\)\d\s\-\+]+', re.IGNORECASE),
+        # URLs and email addresses
+        re.compile(r'https?://\S+', re.IGNORECASE),
+        re.compile(r'Homepage\s*:\s*\S+', re.IGNORECASE),
+        re.compile(r'E-?mail\s*:\s*\S+', re.IGNORECASE),
+        re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b', re.IGNORECASE),
+        # Postal / mailing address lines
+        re.compile(r'(?:Jl\.|Jalan)\s+.{5,}', re.IGNORECASE),
+        re.compile(r'Kotak\s+Pos\s+\d+', re.IGNORECASE),
+        # Page numbers / document control lines
+        re.compile(r'^\s*(?:Page|Halaman)\s+\d+', re.IGNORECASE),
+        re.compile(r'^\s*No\.\s+(?:Dokumen|Revisi)', re.IGNORECASE),
+        re.compile(r'^\s*Tanggal\s+Efektif', re.IGNORECASE),
+    ]
+
+    def _clean_pages_boilerplate(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Remove noise from document pages before semantic chunking.
+        Returns a new list of pages with cleaned text.
+        """
+        # Phase 1: Check if there's any level-1 heading to allow preamble truncation
+        has_heading = False
+        for p in pages:
+            for line in p["text"].split('\n'):
+                heading_info = self._detect_heading(line)
+                if heading_info and heading_info["level"] == 1:
+                    has_heading = True
+                    break
+            if has_heading:
+                break
+                
+        found_heading = not has_heading
+        
+        cleaned_pages = []
+        total_removed = 0
+        
+        for p in pages:
+            lines = p["text"].split('\n')
+            cleaned_lines = []
+            
+            for line in lines:
+                if not found_heading:
+                    heading_info = self._detect_heading(line)
+                    if heading_info and heading_info["level"] == 1:
+                        found_heading = True
+                    else:
+                        total_removed += len(line) + 1
+                        continue
+                
+                stripped = line.strip()
+                if not stripped:
+                    cleaned_lines.append(line)
+                    continue
+                    
+                is_noise = False
+                for pat in self._BOILERPLATE_PATTERNS:
+                    if pat.search(stripped):
+                        is_noise = True
+                        break
+                        
+                if not is_noise and len(stripped) < 15 and stripped.isupper():
+                    if not re.match(r'^\d+\.', stripped):
+                        is_noise = True
+                        
+                if is_noise:
+                    total_removed += len(line) + 1
+                    continue
+                    
+                cleaned_lines.append(line)
+                
+            cleaned_pages.append({
+                "page_number": p["page_number"],
+                "text": "\n".join(cleaned_lines)
+            })
+            
+        if total_removed > 0:
+            logger.info(f"Boilerplate cleaning removed ~{total_removed} characters total")
+            
+        return cleaned_pages
+
     # ─── Heading Detection for Indonesian SOP Documents ─────────────────
     # Patterns ordered from most specific (deepest heading) to broadest.
     # Each tuple: (compiled_regex, heading_level)
@@ -113,8 +200,12 @@ class DocumentProcessor:
         sections: List[Dict[str, Any]] = []
         current_heading: Optional[Dict[str, Any]] = None
         body_lines: List[str] = []
+        
+        current_offset = 0
+        section_start_offset = 0
 
         for line in lines:
+            line_len = len(line) + 1  # +1 for the '\n'
             heading_info = self._detect_heading(line)
             if heading_info:
                 # Flush the previous section
@@ -125,11 +216,15 @@ class DocumentProcessor:
                         "heading_number": current_heading["number"] if current_heading else None,
                         "heading_level": current_heading["level"] if current_heading else None,
                         "body": body_text,
+                        "start_offset": section_start_offset
                     })
                 current_heading = heading_info
                 body_lines = []
+                section_start_offset = current_offset
             else:
                 body_lines.append(line)
+                
+            current_offset += line_len
 
         # Flush the last section
         body_text = '\n'.join(body_lines).strip()
@@ -139,7 +234,9 @@ class DocumentProcessor:
                 "heading_number": current_heading["number"] if current_heading else None,
                 "heading_level": current_heading["level"] if current_heading else None,
                 "body": body_text,
+                "start_offset": section_start_offset
             })
+
 
         return sections
 
@@ -751,6 +848,9 @@ class DocumentProcessor:
         chunk_size = chunk_size or self.chunk_size
         overlap = overlap or self.chunk_overlap
         
+        # Remove cover-page boilerplate and noise per page BEFORE joining
+        pages = self._clean_pages_boilerplate(pages)
+        
         # Combine all page text while tracking page boundaries
         full_text = "\n".join(p["text"] for p in pages)
         
@@ -789,26 +889,8 @@ class DocumentProcessor:
         
         logger.info(f"Parsed {len(sections)} sections from document")
         
-        # Compute section character offsets for page mapping
-        section_char_starts: List[int] = []
-        search_from = 0
-        for sec in sections:
-            # The section's heading (if any) appears first in full_text
-            heading_text = sec["heading"] or ""
-            body_text = sec["body"] or ""
-            
-            # Find the section start in the original text
-            search_target = heading_text if heading_text else body_text[:50]
-            if search_target:
-                pos = full_text.find(search_target, search_from)
-                if pos == -1:
-                    pos = search_from
-                section_char_starts.append(pos)
-                # Move search forward past this section's content
-                section_len = len(heading_text) + len(body_text) + 2
-                search_from = pos + max(section_len, 1)
-            else:
-                section_char_starts.append(search_from)
+        # Extract exact section character offsets computed during parsing
+        section_char_starts = [sec.get("start_offset", 0) for sec in sections]
         
         # Build chunks by merging/splitting sections to fit chunk_size
         chunks: List[Dict[str, Any]] = []
