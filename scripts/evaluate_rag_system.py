@@ -45,8 +45,25 @@ def check_dependencies():
         missing.append("bert-score")
     
     try:
+        # Patch missing langchain_community.chat_models.vertexai in newer langchain versions
+        import sys
+        import types
+        if 'langchain_community' in sys.modules:
+            pass
+        else:
+            import langchain_community
+        
+        if not hasattr(langchain_community, 'chat_models'):
+            langchain_community.chat_models = types.ModuleType('langchain_community.chat_models')
+            sys.modules['langchain_community.chat_models'] = langchain_community.chat_models
+            
+        vertexai = types.ModuleType('langchain_community.chat_models.vertexai')
+        vertexai.ChatVertexAI = type('ChatVertexAI', (object,), {})
+        sys.modules['langchain_community.chat_models.vertexai'] = vertexai
+        
         from ragas import evaluate as ragas_evaluate
-    except ImportError:
+    except ImportError as e:
+        print(f"Ragas import error: {e}")
         missing.append("ragas")
     
     if missing:
@@ -252,7 +269,7 @@ class RAGEvaluator:
             return {'precision': 0, 'recall': 0, 'f1': 0, 'error': str(e)}
     
     def evaluate_with_ragas(self, eval_data: Dict) -> Dict:
-        """Evaluate using RAGAS metrics"""
+        """Evaluate using RAGAS metrics with Google Gemini as LLM evaluator"""
         if not self.use_ragas:
             return {'skipped': True, 'reason': 'RAGAS disabled'}
         
@@ -264,8 +281,32 @@ class RAGEvaluator:
                 context_precision
             )
             from datasets import Dataset
+            from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
             
-            print("  Running RAGAS evaluation...")
+            print("  Running RAGAS evaluation (using Gemini)...")
+            
+            # Get Google API key from environment or app config
+            google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+            if not google_api_key:
+                try:
+                    from app.config import settings
+                    google_api_key = settings.GOOGLE_API_KEY
+                except Exception:
+                    pass
+            
+            if not google_api_key:
+                return {'error': 'GOOGLE_API_KEY not found. Set it in .env or environment.'}
+            
+            # Use Gemini as LLM evaluator instead of OpenAI
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-1.5-flash",
+                google_api_key=google_api_key,
+                temperature=0.0
+            )
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/text-embedding-004",
+                google_api_key=google_api_key
+            )
             
             # Prepare dataset
             dataset = Dataset.from_dict({
@@ -278,7 +319,12 @@ class RAGEvaluator:
             # Select metrics based on available data
             metrics = [faithfulness, answer_relevancy, context_precision]
             
-            results = ragas_evaluate(dataset, metrics=metrics)
+            results = ragas_evaluate(
+                dataset,
+                metrics=metrics,
+                llm=llm,
+                embeddings=embeddings
+            )
             
             return {
                 "faithfulness": results.get('faithfulness'),
@@ -286,6 +332,11 @@ class RAGEvaluator:
                 "context_precision": results.get('context_precision'),
             }
             
+        except ImportError as e:
+            missing_pkg = str(e)
+            print(f"RAGAS import error: {missing_pkg}")
+            print("  Install with: pip install langchain-google-genai")
+            return {'error': f'Missing package: {missing_pkg}. Install: pip install langchain-google-genai'}
         except Exception as e:
             print(f"RAGAS error: {e}")
             return {'error': str(e)}
