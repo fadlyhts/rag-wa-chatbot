@@ -185,6 +185,203 @@ class DocumentProcessor:
                     return True
         return False
 
+    # ─── OCR Post-Processing ───────────────────────────────────────────
+    # Tesseract often misreads scanned SOP documents: heading numbers
+    # (1.1., 1.2., ...) appear as a separate block from their titles
+    # (Definisi, Tujuan, ...). This method reassembles them.
+
+    # Pattern: a line that is ONLY a section number (possibly OCR-garbled)
+    _RE_ORPHAN_NUMBER = re.compile(
+        r'^(\d+[\.,]\d*[\.,]?\d*)[\.,]?\s*$'   # "1.1." or "11," or "14." or "2.4,"
+    )
+    # Pattern: a line that looks like a title (Capitalised word, no number prefix)
+    _RE_ORPHAN_TITLE = re.compile(
+        r'^([A-Z][a-z].{2,})$'                  # "Definisi", "Tujuan", "Sasaran"
+    )
+
+    def _fix_ocr_number(self, raw: str) -> str:
+        """
+        Fix common Tesseract misreads of section numbers.
+        Examples: '11,' -> '1.1.', '14.' -> '1.4.', '2.4,' -> '2.4.'
+        """
+        # Remove trailing comma/period and whitespace
+        cleaned = raw.strip().rstrip('.,')
+        
+        # Case: "11" → could be "1.1" (two single digits merged)
+        if cleaned.isdigit() and len(cleaned) == 2:
+            return f"{cleaned[0]}.{cleaned[1]}."
+        
+        # Case: "14" → "1.4"
+        if cleaned.isdigit() and len(cleaned) == 2:
+            return f"{cleaned[0]}.{cleaned[1]}."
+        
+        # Case: "111" → "1.1.1"  (three digits merged)
+        if cleaned.isdigit() and len(cleaned) == 3:
+            return f"{cleaned[0]}.{cleaned[1]}.{cleaned[2]}."
+        
+        # Case: already has dots like "2.4" or "1.2" → just ensure trailing dot
+        if re.match(r'^\d+\.\d+(\.\d+)?$', cleaned):
+            return cleaned + '.'
+        
+        # Case: comma instead of dot: "2,4" → "2.4."
+        if re.match(r'^\d+,\d+$', cleaned):
+            return cleaned.replace(',', '.') + '.'
+        
+        return cleaned + '.'
+
+    def _postprocess_ocr_text(self, text: str) -> str:
+        """
+        Fix Tesseract layout analysis issues in scanned SOP documents.
+        
+        Problem: Tesseract reads heading numbers as a column, then titles
+        as a separate column, producing:
+            1.1.
+            1.2.
+            1.3.
+            Definisi
+            Body text about definisi...
+            Tujuan
+            Body text about tujuan...
+        
+        Fix: Two-pass approach:
+        1. Detect and collect blocks of orphan numbers
+        2. Scan forward to find short title-like lines and pair them with numbers
+        """
+        lines = text.split('\n')
+        
+        # ── Pass 1: Find orphan number blocks ──────────────────────────
+        # An "orphan block" is 2+ consecutive number-only lines 
+        # (with possible blank lines between them)
+        orphan_blocks: List[Dict[str, Any]] = []  # {start_line, end_line, numbers[]}
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            match = self._RE_ORPHAN_NUMBER.match(line)
+            
+            if match:
+                # Potential start of orphan block — look ahead for more numbers
+                block_numbers = [match.group(1)]
+                block_start = i
+                j = i + 1
+                
+                while j < len(lines):
+                    next_line = lines[j].strip()
+                    if not next_line:  # skip blanks between numbers
+                        j += 1
+                        continue
+                    next_match = self._RE_ORPHAN_NUMBER.match(next_line)
+                    if next_match:
+                        block_numbers.append(next_match.group(1))
+                        j += 1
+                    else:
+                        break
+                
+                if len(block_numbers) >= 2:
+                    # Found an orphan block
+                    orphan_blocks.append({
+                        'start_line': block_start,
+                        'end_line': j - 1,  # last number line
+                        'numbers': block_numbers,
+                    })
+                    i = j
+                    continue
+            
+            i += 1
+        
+        if not orphan_blocks:
+            return text  # No orphan blocks found, return unchanged
+        
+        # ── Pass 2: Remove orphan blocks and pair numbers with titles ──
+        # Title heuristic: a short line (< 60 chars) that starts with a 
+        # capital letter followed by lowercase, and doesn't look like
+        # a continuation sentence.
+        
+        # Mark lines that belong to orphan blocks for removal
+        orphan_line_set = set()
+        for block in orphan_blocks:
+            for li in range(block['start_line'], block['end_line'] + 1):
+                orphan_line_set.add(li)
+            # Also mark blank lines between block end and next content
+            j = block['end_line'] + 1
+            while j < len(lines) and not lines[j].strip():
+                orphan_line_set.add(j)
+                j += 1
+        
+        # Build clean lines (without orphan number blocks)
+        clean_lines = []
+        line_mapping = []  # maps clean_line_index -> original_line_index
+        for i, line in enumerate(lines):
+            if i not in orphan_line_set:
+                clean_lines.append(line)
+                line_mapping.append(i)
+        
+        # Now find title-like lines in clean_lines and pair with orphan numbers
+        # A title line: short, starts with uppercase, is NOT a numbered list item,
+        # and is either preceded by a blank line, a heading, or is the first line
+        
+        # Flatten all orphan numbers in order
+        all_numbers: List[str] = []
+        for block in orphan_blocks:
+            all_numbers.extend(block['numbers'])
+        
+        number_idx = 0  # pointer into all_numbers
+        result_lines: List[str] = []
+        # Track if previous line was a heading (to help title detection)
+        prev_was_heading = False
+        
+        for ci, cline in enumerate(clean_lines):
+            stripped = cline.strip()
+            
+            # Check if current line is itself a heading (already has number)
+            current_is_heading = bool(self._detect_heading(stripped)) if stripped else False
+            
+            if number_idx < len(all_numbers) and stripped:
+                # Blacklist pattern for headers, footers, metadata to avoid incorrect heading assignment
+                blacklist_patterns = [
+                    r'standard\s+operating\s+procedure',
+                    r'kultur\s+teknis',
+                    r'tanaman\s+teh',
+                    r'perkebunan\s+nusantara',
+                    r'direktur',
+                    r'komoditi',
+                    r'januari',
+                    r'bandung',
+                    r'page\s+\d+',
+                    r'halaman\s+\d+',
+                    r'^no\.\s+dokumen',
+                    r'^no\.\s+revisi',
+                    r'^tanggal\s+efektif'
+                ]
+                is_blacklisted = any(re.search(pat, stripped.lower()) for pat in blacklist_patterns)
+
+                # Check if this line looks like a section title
+                # Title characteristics: short, capitalised, standalone word/phrase
+                is_title = (
+                    len(stripped) < 60 and
+                    stripped[0].isupper() and
+                    not stripped[0].isdigit() and
+                    not is_blacklisted and
+                    # Not a numbered list item
+                    not re.match(r'^\d+\)', stripped) and
+                    # Not a lettered sub-item
+                    not re.match(r'^[a-d]\.\s', stripped) and
+                    # Previous line is blank, or this is first line, or prev was heading
+                    (ci == 0 or not clean_lines[ci - 1].strip() or prev_was_heading)
+                )
+                
+                if is_title:
+                    fixed_num = self._fix_ocr_number(all_numbers[number_idx])
+                    result_lines.append(f"{fixed_num} {stripped}")
+                    number_idx += 1
+                    prev_was_heading = True
+                    continue
+            
+            prev_was_heading = current_is_heading
+            result_lines.append(cline)
+        
+        return '\n'.join(result_lines)
+
 
     def read_file(self, file_path: str) -> str:
         """
@@ -335,6 +532,10 @@ class DocumentProcessor:
                         
                         # Pass the file path directly to Tesseract, bypassing Python memory completely
                         page_text = pytesseract.image_to_string(img_path, lang='eng+ind', timeout=60)
+                        
+                        # Fix Tesseract layout issues (orphan numbers separated from titles)
+                        page_text = self._postprocess_ocr_text(page_text)
+                        
                         pages.append({"page_number": i, "text": page_text})
                         
                         # Clean up the temp image file immediately
