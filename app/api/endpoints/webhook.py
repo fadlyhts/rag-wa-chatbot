@@ -361,14 +361,37 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
             else:
                 logger.warning(f"[{request_id}] No source documents retrieved")
             
-            # Append source references to reply (only if relevant)
-            # Gemini embeddings typically have lower dot-product/cosine similarity baseline than OpenAI
-            sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.60)
-            if sources_text:
-                reply_text = reply_text + sources_text
-                logger.info(f"[{request_id}] Sources appended to reply")
+            # Append source references to reply
+            # Use regex to find all citations like [1], [1, 2]
+            import re
+            citations = re.findall(r'\[([\d,\s]+)\]', reply_text)
+            cited_indices = set()
+            for citation in citations:
+                for num in re.split(r'[,\s]+', citation):
+                    if num.strip().isdigit():
+                        cited_indices.add(int(num.strip()))
+            
+            # If the LLM cited specific indices, filter sources_metadata
+            if cited_indices:
+                cited_metadata = []
+                for idx in cited_indices:
+                    if 1 <= idx <= len(sources_metadata):
+                        cited_metadata.append(sources_metadata[idx - 1])
+                # We can skip the min_score threshold here since the LLM explicitly used it
+                sources_text = format_sources_for_whatsapp(cited_metadata, min_score=0.0)
             else:
-                logger.info(f"[{request_id}] No high-relevance sources to append (threshold=0.60)")
+                # Fallback: if LLM failed to cite, use default threshold behavior
+                sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.60)
+                
+            # Clean up the citations from reply text
+            clean_reply_text = re.sub(r'\s*\[[\d,\s]+\]', '', reply_text).strip()
+            
+            if sources_text:
+                reply_text = clean_reply_text + sources_text
+                logger.info(f"[{request_id}] Sources appended to reply. Cited indices: {cited_indices}")
+            else:
+                reply_text = clean_reply_text
+                logger.info(f"[{request_id}] No high-relevance sources to append")
             
             # Use phone_raw (@lid/@c.us) as chat_id for newer WhatsApp accounts
             chat_id = phone_raw if phone_raw else None
