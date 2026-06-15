@@ -52,11 +52,26 @@ def _format_docs(docs: List[Document]) -> str:
         file_name  = meta.get("file_name", "-")
         page_num   = meta.get("page_number")
         score      = meta.get("score", 0.0)
+        doc_metadata = meta.get("doc_metadata", {})
+        
+        doc_type = doc_metadata.get("Jenis Dokumen", "Dokumen")
+        doc_number = doc_metadata.get("No. Dokumen", "")
+        doc_rev = doc_metadata.get("No. Revisi", "")
+        doc_title = doc_metadata.get("Judul", title)
 
         page_info = f" | p.{page_num}" if page_num is not None else ""
+        
+        header = f"[{i}] "
+        if doc_number:
+            header += f"[{doc_type}: {doc_number}"
+            if doc_rev:
+                header += f" | Revisi: {doc_rev}"
+            header += "] "
+            
+        header += f"{doc_title} ({file_name}{page_info})"
+        
         parts.append(
-            f"[{i}] {title} ({file_name}{page_info}) "
-            f"[Relevance: {score:.2f}]\n"
+            f"{header} [Relevance: {score:.2f}]\n"
             f"{doc.page_content}"
         )
 

@@ -121,6 +121,16 @@ class FileProcessor:
                 # Save combined text to DB for preview/search
                 full_text = "\n".join(p["text"] for p in pages)
                 doc.content = full_text
+                
+                # Extract structured metadata (Judul, No Dokumen, dll) from the first few pages
+                try:
+                    metadata = self.document_processor.extract_document_metadata(full_text[:5000])
+                    if metadata:
+                        doc.doc_metadata = metadata
+                        logger.info(f"Extracted document metadata: {metadata}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract document metadata: {e}")
+                    
                 db.commit()
                 
                 total_pages = len(pages)
@@ -178,6 +188,8 @@ class FileProcessor:
                     # Heading metadata from semantic chunking
                     'heading': chunk_info.get("heading"),
                     'parent_heading': chunk_info.get("parent_heading"),
+                    # Document level metadata (Judul, No Dokumen, dll)
+                    'doc_metadata': doc.doc_metadata or {},
                 }
                 payloads.append(payload)
             

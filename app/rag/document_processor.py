@@ -52,6 +52,46 @@ class DocumentProcessor:
         else:
             # Rough estimate
             return len(text) // 4
+            
+    def extract_document_metadata(self, text: str) -> Dict[str, str]:
+        """
+        Extract structured metadata from the beginning of a document (like SOP/Instruksi Kerja headers)
+        using regex patterns.
+        """
+        metadata = {}
+        
+        # We only search the first 3000 characters to avoid matching random text deep in the document
+        search_area = text[:3000]
+        
+        # Patterns for SOP / Instruksi Kerja headers
+        patterns = {
+            "Jenis Dokumen": r'\b(INSTRUKSI\s+KERJA|STANDARD\s+OPERATING\s+PROCEDURE|SOP)\b',
+            "Judul": r'Judul\s*:\s*([^\n]+)',
+            "No. Dokumen": r'No\.?\s*Dokumen\s*:\s*([^\n]+)',
+            "No. Revisi": r'No\.?\s*Revisi\s*:\s*([^\n]+)',
+            "Tanggal Terbit": r'Tanggal\s*Terbit\s*:\s*([^\n]+)'
+        }
+        
+        for key, pattern in patterns.items():
+            match = re.search(pattern, search_area, re.IGNORECASE)
+            if match:
+                val = match.group(1).strip()
+                
+                # Special fix for "Judul" which often catches the "Cap :" column in the same line
+                if key == "Judul":
+                    val = re.sub(r'\s*Cap\b.*$', '', val, flags=re.IGNORECASE).strip()
+                    
+                # Special fix for OCR misreading numbers in "No. Revisi" (e.g., 'OL' -> '01')
+                if key == "No. Revisi":
+                    val = val.replace('O', '0').replace('o', '0').replace('L', '1').replace('l', '1')
+                
+                # Clean up if Tesseract added weird characters at the end
+                val = re.sub(r'[^a-zA-Z0-9\s\.\-\/]', '', val).strip()
+                
+                if val:
+                    metadata[key] = val
+                    
+        return metadata
     
     # ─── Boilerplate / Cover-Page Noise Patterns ────────────────────────
     # Only GENERIC patterns that apply to ANY document type.
@@ -71,8 +111,10 @@ class DocumentProcessor:
         re.compile(r'Kotak\s+Pos\s+\d+', re.IGNORECASE),
         # Page numbers / document control lines
         re.compile(r'^\s*(?:Page|Halaman)\s+\d+', re.IGNORECASE),
-        re.compile(r'^\s*No\.\s+(?:Dokumen|Revisi)', re.IGNORECASE),
-        re.compile(r'^\s*Tanggal\s+Efektif', re.IGNORECASE),
+        re.compile(r'^\s*(?:.{0,15})?\bNo\.\s+(?:Dokumen|Revisi)\b', re.IGNORECASE),
+        re.compile(r'^\s*(?:.{0,15})?\bTanggal\s+(?:Efektif|Terbit)\b', re.IGNORECASE),
+        re.compile(r'^\s*(?:.{0,15})?\bJudul\s*:', re.IGNORECASE),
+        re.compile(r'^\s*(?:.{0,15})?\b(?:SISTEM MANAJEMEN|PT PERKEBUNAN NUSANTARA|INSTRUKSI KERJA|STANDARD OPERATING PROCEDURE|SOP)\b', re.IGNORECASE),
     ]
 
     def _clean_pages_boilerplate(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

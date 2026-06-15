@@ -193,6 +193,7 @@ def qdrant_result_to_document(result: Dict[str, Any]) -> Document:
         "content_type": payload.get("content_type", "unknown"),
         "chunk_index":  payload.get("chunk_index"),
         "total_chunks": payload.get("total_chunks"),
+        "doc_metadata": payload.get("doc_metadata", {}),
         "score":        result.get("score", 0.0),
         "qdrant_id":    result.get("id"),
     }
