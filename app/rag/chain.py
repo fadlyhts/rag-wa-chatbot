@@ -55,7 +55,7 @@ def _format_docs(docs: List[Document]) -> str:
 
         page_info = f" | p.{page_num}" if page_num is not None else ""
         parts.append(
-            f"[Source {i}] {title} ({file_name}{page_info}) "
+            f"[{i}] {title} ({file_name}{page_info}) "
             f"[Relevance: {score:.2f}]\n"
             f"{doc.page_content}"
         )

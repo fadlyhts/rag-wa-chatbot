@@ -528,10 +528,13 @@ class DocumentProcessor:
                 page_text = page.extract_text() or ""
                 pages.append({"page_number": i, "text": page_text})
         
-        # If PDF has very little text overall, it's likely scanned - use OCR
+        # If PDF has very little text per page on average, it's likely scanned with a digital watermark - use OCR
         total_text = "".join(p["text"] for p in pages)
-        if len(total_text.strip()) < 100 and OCR_AVAILABLE:
-            logger.info(f"PDF appears to be scanned, using OCR: {file_path}")
+        avg_chars_per_page = len(total_text.strip()) / max(len(pages), 1)
+        
+        # A normal text page usually has 1500-3000 chars. If < 500, it's likely just a footer/watermark.
+        if avg_chars_per_page < 500 and OCR_AVAILABLE:
+            logger.info(f"PDF appears to be scanned (avg {avg_chars_per_page:.1f} chars/page), using OCR: {file_path}")
             pages = self._read_pdf_ocr_pages(file_path)
         
         return pages

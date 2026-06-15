@@ -18,7 +18,16 @@ class GeminiEmbeddingsService:
     
     def __init__(self):
         # Initialize the new genai client
-        self.client = genai.Client(api_key=rag_config.google_api_key)
+        if rag_config.use_vertex_ai and rag_config.vertex_project_id:
+            self.client = genai.Client(
+                vertexai=True,
+                project=rag_config.vertex_project_id,
+                location=rag_config.vertex_location
+            )
+            logger.info(f"Using Vertex AI for embeddings: {rag_config.vertex_project_id} in {rag_config.vertex_location}")
+        else:
+            self.client = genai.Client(api_key=rag_config.google_api_key)
+            logger.info("Using Google AI Studio (API Key) for embeddings")
         
         # Model name (without "models/" prefix for new SDK)
         model_name = rag_config.gemini_embedding_model
@@ -138,37 +147,37 @@ class GeminiEmbeddingsService:
             if texts_to_generate:
                 logger.info(f"Generating embeddings for {len(texts_to_generate)} texts (cached: {len(texts) - len(texts_to_generate)})")
                 
-                # Process in smaller batches with retry for rate limits
-                BATCH_SIZE = 20
+                # Process in large batches (Vertex AI supports up to 250 instances per request)
+                BATCH_SIZE = 100  # Conservative batch size to avoid payload size limits
                 for batch_start in range(0, len(texts_to_generate), BATCH_SIZE):
                     batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
                     batch_texts = texts_to_generate[batch_start:batch_end]
                     
-                    # Generate embeddings one by one within each batch
-                    # Gemini embed_content treats list input as a single multi-part document,
-                    # so we must call it per-text to get individual embeddings
+                    # Generate embeddings in a single batch API call!
                     batch_embeddings = []
-                    for text in batch_texts:
-                        # Retry with exponential backoff for rate limits
-                        max_retries = 5
-                        for attempt in range(max_retries):
-                            try:
-                                response = self.client.models.embed_content(
-                                    model=self.model_name,
-                                    contents=text,
-                                )
-                                batch_embeddings.append(response.embeddings[0].values)
-                                break
-                            except Exception as retry_err:
-                                if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
-                                    wait_time = (2 ** attempt) * 2
-                                    logger.warning(f"Rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                                    time.sleep(wait_time)
-                                    if attempt == max_retries - 1:
-                                        logger.error(f"Failed to embed text after {max_retries} retries")
+                    max_retries = 5
+                    for attempt in range(max_retries):
+                        try:
+                            response = self.client.models.embed_content(
+                                model=self.model_name,
+                                contents=batch_texts,
+                            )
+                            # Extact values from the list of embeddings returned
+                            for emb in response.embeddings:
+                                batch_embeddings.append(emb.values)
+                            break
+                        except Exception as retry_err:
+                            if "429" in str(retry_err) or "Resource exhausted" in str(retry_err):
+                                wait_time = (2 ** attempt) * 2
+                                logger.warning(f"Batch rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                                time.sleep(wait_time)
+                                if attempt == max_retries - 1:
+                                    logger.error(f"Failed to embed batch after {max_retries} retries")
+                                    # Fallback: append None for all items in batch
+                                    for _ in batch_texts:
                                         batch_embeddings.append(None)
-                                else:
-                                    raise
+                            else:
+                                raise
                     
                     for i, embedding in enumerate(batch_embeddings):
                         original_index = indices_to_generate[batch_start + i]

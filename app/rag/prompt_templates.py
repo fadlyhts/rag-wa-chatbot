@@ -185,6 +185,7 @@ LCEL_RAG_PROMPT = PromptTemplate.from_template(
 Panduan:
 - Jawab pertanyaan HANYA berdasarkan informasi yang ada di dalam konteks.
 - Jika jawabannya tidak ada di dalam konteks, katakan dengan sopan bahwa Anda belum memiliki informasi tersebut. JANGAN MENGARANG JAWABAN.
+- PENTING: Untuk setiap kalimat atau paragraf yang Anda tulis menggunakan informasi dari konteks, Anda WAJIB mencantumkan nomor sumber di akhir kalimat, misal: [1], [2], atau [1, 3] jika menggunakan beberapa sumber.
 - Karena ini adalah WhatsApp, berikan jawaban yang singkat, padat, dan jelas.
 - Gunakan bahasa Indonesia yang baik, ramah, dan gunakan emoji secukupnya.
 - Format jawaban agar mudah dibaca (gunakan baris baru atau bullet point jika perlu).
@@ -197,5 +198,5 @@ Riwayat Percakapan Sebelumnya:
 
 Pertanyaan Pengguna: {question}
 
-Berikan jawaban yang ramah dan membantu:"""
+Berikan jawaban yang ramah dan membantu beserta sitasinya:"""
 )

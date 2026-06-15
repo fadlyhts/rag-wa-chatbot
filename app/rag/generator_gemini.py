@@ -15,8 +15,16 @@ class GeminiGenerator:
     
     def __init__(self):
         # Initialize the new genai client
-        self.client = genai.Client(api_key=rag_config.google_api_key)
-        
+        if rag_config.use_vertex_ai and rag_config.vertex_project_id:
+            self.client = genai.Client(
+                vertexai=True,
+                project=rag_config.vertex_project_id,
+                location=rag_config.vertex_location
+            )
+            logger.info(f"Using Vertex AI for generation: {rag_config.vertex_project_id} in {rag_config.vertex_location}")
+        else:
+            self.client = genai.Client(api_key=rag_config.google_api_key)
+            logger.info("Using Google AI Studio (API Key) for generation")
         # Model name (without "models/" prefix)
         model_name = rag_config.gemini_model
         if model_name.startswith("models/"):
