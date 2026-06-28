@@ -1,6 +1,7 @@
 """Prompt templates for RAG system"""
 
 from typing import List, Dict
+from langchain_core.prompts import PromptTemplate
 
 
 SYSTEM_PROMPT = """You are an intelligent AI assistant for a WhatsApp chatbot. Your role is to provide helpful, accurate, and friendly responses based on the provided context.
@@ -172,3 +173,31 @@ QUICK_REPLIES = {
 def get_quick_replies(intent: str) -> List[str]:
     """Get quick reply suggestions based on intent"""
     return QUICK_REPLIES.get(intent, QUICK_REPLIES['general'])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LCEL Prompt Template
+# ─────────────────────────────────────────────────────────────────────────────
+
+LCEL_RAG_PROMPT = PromptTemplate.from_template(
+    """Anda adalah asisten AI yang cerdas untuk chatbot WhatsApp perusahaan. Tugas Anda adalah memberikan jawaban yang akurat, ramah, dan profesional berdasarkan konteks yang diberikan.
+
+Panduan:
+- Jawab pertanyaan HANYA berdasarkan informasi yang ada di dalam konteks.
+- Jika pesan pengguna HANYA berupa sapaan santai (seperti 'halo', 'hi', 'selamat pagi', dll), balaslah sapaan tersebut dengan ramah dan tanyakan apa yang bisa dibantu, tanpa perlu menyebutkan soal basis pengetahuan.
+- Jika pengguna menanyakan informasi spesifik dan jawabannya TIDAK ADA di dalam konteks, berikan respons yang natural. Jangan kaku. Contoh: "Maaf Kak, untuk informasi tersebut belum ada di catatan saya nih. Ada yang lain yang bisa saya bantu?"
+- PENTING: Untuk setiap kalimat atau paragraf yang Anda tulis menggunakan informasi dari konteks, Anda WAJIB mencantumkan nomor sumber di akhir kalimat, misal: [1], [2], atau [1, 3] jika menggunakan beberapa sumber.
+- Karena ini adalah WhatsApp, berikan jawaban yang singkat, padat, dan jelas.
+- Gunakan bahasa Indonesia yang baik, ramah, dan gunakan emoji secukupnya.
+- Format jawaban agar mudah dibaca (gunakan baris baru atau bullet point jika perlu).
+
+Konteks Informasi:
+{context}
+
+Riwayat Percakapan Sebelumnya:
+{conversation_history}
+
+Pertanyaan Pengguna: {question}
+
+Berikan jawaban yang ramah dan membantu beserta sitasinya:"""
+)

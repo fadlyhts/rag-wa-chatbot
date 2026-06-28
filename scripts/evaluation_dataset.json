@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Apa yang dimaksud dengan Persiapan kebun perbanyakan?",
+    "ground_truth": "Persiapan kebun perbanyakan adalah kegiatan mempersiapkan blok kebun TM teh pilihan yang akan dijadikan sebagai kebun perbanyakan",
+    "category": "SOP"
+  },
+  {
+    "question": "Jelaskan tujuan dari Persiapan kebun perbanyakan!",
+    "ground_truth": "Memperoleh kebun perbanyakan dengan kondisi sebagai berikut:\nTanaman teh yang dipelihara tumbuh sehat dan jagur\nKlon tanaman teh yang dipelihara homogen sesuai dengan program penanaman\nTTI\nPotensi jumlah stekres yang dihasilkan sesuai dengan standar",
+    "category": "SOP"
+  },
+  {
+    "question": "Apa itu persemaian?",
+    "ground_truth": "Pesemaian adalah lokasi/tempat dilakukannya rangkaian kegiatan untuk menghasilkan bibit teh siap salur (bibit kelas A & B) dengan jumlah sesuai dengan kebutuhan.",
+    "category": "SOP"
+  },
+  {
+    "question": "Jelaskan tujuan persemaian!",
+    "ground_truth": "Menghasilkan bibit teh siap salur (bibit kelas A & B) dengan jumlah sesuai kebutuhan.",
+    "category": "SOP"
+  },
+  {
+    "question": "Apa yang dimaksud dengan Persiapan media tanam",
+    "ground_truth": "Persiapan media tanam adalah serangkaian kegiatan di pesemaian teh mulai dari persiapan media tanah, pengisian bekong, penyusunan bekong sampai dengan proses penyungkupan bedengan.",
+    "category": "SOP"
+  },
+  {
+    "question": "Jelaskan tujuan Persiapan media tanam!",
+    "ground_truth": "1) Memperoleh media tanam (tanah top soil dan sub soil) dengan kondisi fisik, struktur dan kimia tanah yang sesuai untuk pertumbuhan stek teh.\n2) Menciptakan kondisi mikro klimat yang sesuai (terutama kelembaban tanah) untuk pertumbuhan stek teh.",
+    "category": "SOP"
+  }
+]

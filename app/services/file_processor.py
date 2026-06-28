@@ -7,6 +7,7 @@ import logging
 import hashlib
 import uuid
 import os
+import asyncio
 
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,7 @@ class FileProcessor:
         title: str,
         content_type: str = "document",
         category_id: Optional[int] = None,
+        division_id: Optional[int] = None,
         file_size: Optional[int] = None,
         file_type: Optional[str] = None
     ) -> Document:
@@ -62,6 +64,7 @@ class FileProcessor:
             content="",  # Will be filled during processing
             content_type=content_type,
             category_id=category_id,
+            division_id=division_id,
             file_path=file_path,
             file_size=file_size,
             file_type=file_type,
@@ -99,49 +102,97 @@ class FileProcessor:
             
             logger.info(f"Processing document {document_id}: {doc.title}")
             
-            # Extract text from file
+            # Resolve file path
             try:
-                # Ensure file path exists, try both absolute and relative
                 file_path = Path(doc.file_path)
                 if not file_path.exists():
-                    # Try absolute path from current directory
                     file_path = Path.cwd() / doc.file_path
                     if not file_path.exists():
                         raise FileNotFoundError(f"File not found: {doc.file_path}")
+            except Exception as e:
+                raise Exception(f"File resolution failed: {str(e)}")
+            
+            # Extract text with page-level granularity
+            # PENTING: Jalankan di thread terpisah agar TIDAK memblokir event loop FastAPI
+            # Tanpa ini, OCR yang CPU-intensive akan memblokir healthcheck dan menyebabkan container di-kill
+            try:
+                pages = await asyncio.to_thread(
+                    self.document_processor.read_file_pages, str(file_path)
+                )
                 
-                text = self.document_processor.read_file(str(file_path))
-                doc.content = text
+                # Save combined text to DB for preview/search
+                full_text = "\n".join(p["text"] for p in pages)
+                doc.content = full_text
+                
+                # Extract structured metadata (Judul, No Dokumen, dll) from the first few pages
+                try:
+                    metadata = self.document_processor.extract_document_metadata(full_text[:5000])
+                    if metadata:
+                        doc.doc_metadata = metadata
+                        logger.info(f"Extracted document metadata: {metadata}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract document metadata: {e}")
+                    
                 db.commit()
-                logger.info(f"Extracted {len(text)} characters from {doc.title}")
+                
+                total_pages = len(pages)
+                logger.info(
+                    f"Extracted {len(full_text)} chars from {doc.title} "
+                    f"({total_pages} pages)"
+                )
             except Exception as e:
                 raise Exception(f"Text extraction failed: {str(e)}")
             
-            if not text.strip():
+            if not full_text.strip():
                 raise Exception("Document is empty after extraction")
             
-            # Chunk text
-            chunks = self.document_processor.chunk_text(text)
-            logger.info(f"Split into {len(chunks)} chunks")
+            # Chunk text using heading-aware semantic chunking
+            # Falls back to sentence-based chunking for non-structured docs
+            page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
+            chunk_texts = [c["text"] for c in page_chunks]
+            logger.info(f"Split into {len(page_chunks)} semantic chunks")
             
-            # Generate embeddings (with progress logging for large documents)
-            logger.info(f"Starting embedding generation for {len(chunks)} chunks...")
-            embeddings = await self.embeddings.generate_embeddings_batch_async(chunks)
+            # Generate embeddings
+            logger.info(f"Starting embedding generation for {len(chunk_texts)} chunks...")
+            embeddings = await self.embeddings.generate_embeddings_batch_async(chunk_texts)
             logger.info(f"Successfully generated {len(embeddings)} embeddings")
             
-            # Generate unique UUID IDs for chunks (Qdrant requires UUID or integer)
-            chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            # Filter out chunks with failed (None) embeddings
+            valid_indices = [i for i, emb in enumerate(embeddings) if emb is not None]
+            if len(valid_indices) < len(embeddings):
+                logger.warning(f"Skipping {len(embeddings) - len(valid_indices)} chunks with failed embeddings")
+                page_chunks = [page_chunks[i] for i in valid_indices]
+                embeddings = [embeddings[i] for i in valid_indices]
+                chunk_texts = [chunk_texts[i] for i in valid_indices]
             
-            # Prepare payloads for Qdrant
+            if not embeddings:
+                raise Exception("All embeddings failed to generate")
+            
+            # Prepare Qdrant payloads with page metadata
+            chunk_ids = [str(uuid.uuid4()) for _ in range(len(page_chunks))]
+            
+            # File name without extension for display
+            file_name = Path(doc.file_path).stem if doc.file_path else doc.title
+            
             payloads = []
-            for i, chunk in enumerate(chunks):
+            for i, chunk_info in enumerate(page_chunks):
                 payload = {
                     'document_id': doc.id,
                     'title': doc.title,
-                    'content': chunk,
+                    'file_name': file_name,
+                    'content': chunk_info["text"],
                     'content_type': doc.content_type or "document",
                     'chunk_index': i,
-                    'total_chunks': len(chunks),
-                    'category_id': doc.category_id
+                    'total_chunks': len(page_chunks),
+                    'page_number': chunk_info["page_number"],
+                    'page_numbers': chunk_info["page_numbers"],
+                    'category_id': doc.category_id,
+                    'division_id': doc.division_id,
+                    # Heading metadata from semantic chunking
+                    'heading': chunk_info.get("heading"),
+                    'parent_heading': chunk_info.get("parent_heading"),
+                    # Document level metadata (Judul, No Dokumen, dll)
+                    'doc_metadata': doc.doc_metadata or {},
                 }
                 payloads.append(payload)
             
@@ -151,22 +202,22 @@ class FileProcessor:
                 vectors=embeddings,
                 payloads=payloads
             )
-            logger.info(f"Inserted {len(chunks)} chunks into Qdrant")
+            logger.info(f"Inserted {len(page_chunks)} chunks into Qdrant")
             
             # Create chunk records in database
-            for i, (chunk, chunk_id) in enumerate(zip(chunks, chunk_ids)):
+            for i, (chunk_info, chunk_id) in enumerate(zip(page_chunks, chunk_ids)):
                 chunk_record = DocumentChunk(
                     document_id=doc.id,
                     chunk_index=i,
-                    chunk_text=chunk,
-                    chunk_size=self.document_processor.count_tokens(chunk),
+                    chunk_text=chunk_info["text"],
+                    chunk_size=self.document_processor.count_tokens(chunk_info["text"]),
                     qdrant_point_id=chunk_id
                 )
                 db.add(chunk_record)
             
             # Update document status
             doc.embedding_status = "completed"
-            doc.chunks_count = len(chunks)
+            doc.chunks_count = len(page_chunks)
             doc.processed_at = datetime.utcnow()
             doc.failed_reason = None
             

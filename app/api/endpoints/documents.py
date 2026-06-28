@@ -1,7 +1,7 @@
 """Document management API endpoints"""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from pathlib import Path
@@ -9,8 +9,9 @@ import shutil
 import logging
 
 from app.database.session import get_db
-from app.security.auth import get_current_active_admin
+from app.security.auth import get_current_active_admin, decode_access_token
 from app.models.admin import Admin
+from app.models.document import Document
 from app.schemas.document import (
     DocumentListResponse,
     DocumentDetailResponse,
@@ -20,6 +21,10 @@ from app.schemas.document import (
     DocumentBulkDeleteResponse,
     DocumentCategoryResponse,
     DocumentCategoryCreate,
+    DocumentCategoryUpdate,
+    DivisionCreate,
+    DivisionUpdate,
+    DivisionResponse,
     DocumentChunkResponse,
     DocumentUpdate,
     DocumentUsageStats
@@ -48,8 +53,104 @@ async def list_categories(
         categories = document_service.get_categories(db)
         return categories
     except Exception as e:
-        logger.error(f"Error listing categories: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list categories: {str(e)}")
+
+@router.get("/documents/divisions")
+async def list_divisions(
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    List all document divisions
+    """
+    try:
+        from app.models.division import Division
+        divisions = db.query(Division).all()
+        return [{"id": d.id, "name": d.name} for d in divisions]
+    except Exception as e:
+        logger.error(f"Error listing divisions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list divisions: {str(e)}")
+
+@router.post("/documents/divisions", response_model=DivisionResponse)
+async def create_division(
+    division_data: DivisionCreate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Create a new document division
+    """
+    if current_admin.role.value != "super_admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        from app.models.division import Division
+        division = Division(name=division_data.name)
+        db.add(division)
+        db.commit()
+        db.refresh(division)
+        return division
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating division: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create division: {str(e)}")
+
+@router.put("/documents/divisions/{division_id}", response_model=DivisionResponse)
+async def update_division(
+    division_id: int,
+    division_data: DivisionUpdate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Update a document division
+    """
+    if current_admin.role.value != "super_admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        from app.models.division import Division
+        division = db.query(Division).filter(Division.id == division_id).first()
+        if not division:
+            raise HTTPException(status_code=404, detail="Division not found")
+        
+        if division_data.name:
+            division.name = division_data.name
+            
+        db.commit()
+        db.refresh(division)
+        return division
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating division: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update division: {str(e)}")
+
+@router.delete("/documents/divisions/{division_id}")
+async def delete_division(
+    division_id: int,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Delete a document division
+    """
+    if current_admin.role.value != "super_admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        from app.models.division import Division
+        division = db.query(Division).filter(Division.id == division_id).first()
+        if not division:
+            raise HTTPException(status_code=404, detail="Division not found")
+            
+        db.delete(division)
+        db.commit()
+        return {"status": "success", "message": "Division deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting division: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete division: {str(e)}")
 
 
 @router.post("/documents/categories", response_model=DocumentCategoryResponse)
@@ -72,6 +173,48 @@ async def create_category(
         logger.error(f"Error creating category: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
 
+@router.put("/documents/categories/{category_id}", response_model=DocumentCategoryResponse)
+async def update_category(
+    category_id: int,
+    category_data: DocumentCategoryUpdate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Update a document category
+    """
+    try:
+        category = document_service.update_category(
+            db=db,
+            category_id=category_id,
+            name=category_data.name,
+            description=category_data.description
+        )
+        return category
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating category: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update category: {str(e)}")
+
+@router.delete("/documents/categories/{category_id}")
+async def delete_category(
+    category_id: int,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin)
+):
+    """
+    Delete a document category
+    """
+    try:
+        document_service.delete_category(db=db, category_id=category_id)
+        return {"status": "success", "message": "Category deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting category: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete category: {str(e)}")
+
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
@@ -80,6 +223,7 @@ async def list_documents(
     search: Optional[str] = None,
     status: Optional[str] = None,
     category: Optional[int] = None,
+    division: Optional[int] = None,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_active_admin)
 ):
@@ -93,13 +237,20 @@ async def list_documents(
     - **category**: Filter by category ID
     """
     try:
+        effective_division_id = None
+        if not current_admin.is_super_admin:
+            effective_division_id = current_admin.division_id
+        elif division is not None:
+            effective_division_id = division
+
         result = document_service.list_documents(
             db=db,
             page=page,
             limit=limit,
             search=search,
             status=status,
-            category_id=category
+            category_id=category,
+            division_id=effective_division_id
         )
         return result
     except Exception as e:
@@ -114,6 +265,7 @@ async def upload_document(
     title: Optional[str] = None,
     content_type: str = "document",
     category_id: Optional[int] = None,
+    division_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_active_admin)
 ):
@@ -177,6 +329,7 @@ async def upload_document(
             title=title or file.filename,
             content_type=content_type,
             category_id=category_id,
+            division_id=current_admin.division_id if current_admin.division_id else division_id,
             file_size=file_size,
             file_type=file_ext.replace('.', '')
         )
@@ -207,6 +360,7 @@ async def bulk_upload_documents(
     files: List[UploadFile] = File(...),
     content_type: str = "document",
     category_id: Optional[int] = None,
+    division_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_active_admin)
 ):
@@ -258,6 +412,7 @@ async def bulk_upload_documents(
                     title=file.filename,
                     content_type=content_type,
                     category_id=category_id,
+                    division_id=current_admin.division_id if current_admin.division_id else division_id,
                     file_size=file_size,
                     file_type=file_ext.replace('.', '')
                 )
@@ -342,6 +497,95 @@ async def get_document_preview(
     except Exception as e:
         logger.error(f"Error getting preview for {document_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get preview: {str(e)}")
+
+
+@router.get("/documents/{document_id}/download")
+async def download_document(
+    document_id: int,
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Download the original document file.
+    
+    Supports authentication via:
+    - Query parameter `token` (for browser-initiated requests like PDF viewers)
+    - Standard Authorization Bearer header
+    
+    Returns the file with appropriate content-type.
+    """
+    # Authenticate: token query param is the primary method since
+    # vue-pdf-embed loads PDFs via URL and can't send custom headers
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Provide 'token' query parameter."
+        )
+    
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    admin = db.query(Admin).filter(Admin.username == username, Admin.is_active == True).first()
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    try:
+        document = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if not document.file_path:
+            raise HTTPException(status_code=404, detail="Document file path not available")
+        
+        # Resolve file path - try absolute first, then relative to CWD
+        file_path = Path(document.file_path)
+        if not file_path.exists():
+            file_path = Path.cwd() / document.file_path
+            if not file_path.exists():
+                # Also try relative to the uploads directory
+                file_path = UPLOAD_DIR / Path(document.file_path).name
+                if not file_path.exists():
+                    raise HTTPException(status_code=404, detail="Document file not found on disk")
+        
+        # Determine media type based on file extension
+        media_type_map = {
+            'pdf': 'application/pdf',
+            'txt': 'text/plain',
+            'md': 'text/markdown',
+            'csv': 'text/csv',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff',
+            'bmp': 'image/bmp',
+        }
+        
+        file_ext = document.file_type or file_path.suffix.lstrip('.')
+        media_type = media_type_map.get(file_ext.lower(), 'application/octet-stream')
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            filename=f"{document.title}.{file_ext}" if document.title else file_path.name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading document {document_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
 @router.get("/documents/{document_id}/chunks", response_model=List[DocumentChunkResponse])

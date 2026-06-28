@@ -32,7 +32,8 @@ class DocumentService:
         limit: int = 20,
         search: Optional[str] = None,
         status: Optional[str] = None,
-        category_id: Optional[int] = None
+        category_id: Optional[int] = None,
+        division_id: Optional[int] = None
     ) -> DocumentListResponse:
         """
         List documents with pagination and filters
@@ -44,11 +45,15 @@ class DocumentService:
             search: Search query for title/content
             status: Filter by embedding_status
             category_id: Filter by category
+            division_id: Filter by division
             
         Returns:
             Paginated document list
         """
-        query = db.query(Document).options(joinedload(Document.category))
+        query = db.query(Document).options(
+            joinedload(Document.category),
+            joinedload(Document.division)
+        ).filter(Document.is_active == True)
         
         # Apply filters
         if search:
@@ -65,6 +70,9 @@ class DocumentService:
         
         if category_id:
             query = query.filter(Document.category_id == category_id)
+            
+        if division_id:
+            query = query.filter(Document.division_id == division_id)
         
         # Count total
         total = query.count()
@@ -89,6 +97,8 @@ class DocumentService:
                 chunks_count=doc.chunks_count,
                 category_id=doc.category_id,
                 category_name=doc.category.name if doc.category else None,
+                division_id=doc.division_id,
+                division_name=doc.division.name if doc.division else None,
                 upload_date=doc.upload_date,
                 processed_at=doc.processed_at,
                 is_active=doc.is_active
@@ -115,7 +125,8 @@ class DocumentService:
             Document details or None
         """
         doc = db.query(Document).options(joinedload(Document.category)).filter(
-            Document.id == document_id
+            Document.id == document_id,
+            Document.is_active == True
         ).first()
         
         if not doc:
@@ -140,7 +151,10 @@ class DocumentService:
         Returns:
             Document preview or None
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return None
@@ -171,6 +185,14 @@ class DocumentService:
         Returns:
             List of document chunks
         """
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
+        
+        if not doc:
+            return []
+
         chunks = db.query(DocumentChunk).filter(
             DocumentChunk.document_id == document_id
         ).order_by(DocumentChunk.chunk_index).all()
@@ -200,7 +222,10 @@ class DocumentService:
         Returns:
             Updated document or None
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return None
@@ -236,7 +261,10 @@ class DocumentService:
         Returns:
             True if successful
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return False
@@ -305,7 +333,10 @@ class DocumentService:
         Returns:
             Usage statistics
         """
-        doc = db.query(Document).filter(Document.id == document_id).first()
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.is_active == True
+        ).first()
         
         if not doc:
             return DocumentUsageStats(
@@ -369,6 +400,35 @@ class DocumentService:
         
         logger.info(f"Created category: {name}")
         return category
+
+    def update_category(
+        self,
+        db: Session,
+        category_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> DocumentCategory:
+        category = db.query(DocumentCategory).filter(DocumentCategory.id == category_id).first()
+        if not category:
+            raise ValueError(f"Category {category_id} not found")
+            
+        if name is not None:
+            category.name = name
+        if description is not None:
+            category.description = description
+            
+        db.commit()
+        db.refresh(category)
+        return category
+
+    def delete_category(self, db: Session, category_id: int) -> bool:
+        category = db.query(DocumentCategory).filter(DocumentCategory.id == category_id).first()
+        if not category:
+            raise ValueError(f"Category {category_id} not found")
+            
+        db.delete(category)
+        db.commit()
+        return True
 
 
 # Global document service instance

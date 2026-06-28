@@ -12,23 +12,26 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def get_or_create_user(phone_number: str, db: Session) -> User:
+def get_or_create_user(phone_number: str, db: Session, whatsapp_name: str = None) -> User:
     """Get existing user or create new one"""
     user = db.query(User).filter(User.phone_number == phone_number).first()
     
     if not user:
         user = User(
             phone_number=phone_number,
+            whatsapp_name=whatsapp_name,
             language="en",
             created_at=datetime.utcnow()
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-        logger.info(f"Created new user: {user.id} ({phone_number})")
+        logger.info(f"Created new user: {user.id} ({phone_number}, name={whatsapp_name})")
     else:
-        # Update last active
+        # Update last active and name if available
         user.last_active = datetime.utcnow()
+        if whatsapp_name and not user.whatsapp_name:
+            user.whatsapp_name = whatsapp_name
         db.commit()
     
     return user
@@ -166,6 +169,15 @@ async def generate_ai_response(
     try:
         # Import RAG here to avoid circular imports
         from app.rag import generate_rag_response_async
+        from app.models.user import User
+        
+        # Get user's division
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        # Add division filter if user belongs to a division
+        filters = None
+        if user and user.division_id:
+            filters = {"division_id": user.division_id}
         
         # Get conversation history
         history = get_conversation_history(conversation_id, limit=5, db=db)
@@ -183,23 +195,27 @@ async def generate_ai_response(
         response = await generate_rag_response_async(
             query=user_message,
             conversation_history=formatted_history,
-            user_id=user_id
+            user_id=user_id,
+            filters=filters
         )
         
         response_time = int((time.time() - start_time) * 1000)
         logger.info(f"RAG response generated in {response_time}ms for user {user_id}")
         
-        # Save assistant response with metadata
+        # Save assistant response with full metadata
         save_assistant_message(
             conversation_id=conversation_id,
             user_id=user_id,
             content=response['text'],
             rag_context={
-                'retrieved_docs': response['sources'],
-                'relevance_scores': response['scores'],
-                'docs_retrieved': response['docs_retrieved']
+                # ── Data lengkap (baru) ──
+                'sources_metadata':  response.get('sources_metadata', []),
+                # ── Backward-compat ──
+                'retrieved_docs':    response.get('sources', []),
+                'relevance_scores':  response.get('scores', []),
+                'docs_retrieved':    response.get('docs_retrieved', 0),
             },
-            llm_tokens=response['tokens'],
+            llm_tokens=response.get('tokens', 0),
             response_time_ms=response.get('total_time_ms', response_time),
             db=db
         )

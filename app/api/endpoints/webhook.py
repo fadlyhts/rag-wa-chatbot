@@ -51,7 +51,7 @@ async def webhook(
         logger.info(f"[{request_id}] Webhook event: {event}")
         
         # Handle based on event type
-        if event == "message" or event == "message.any":
+        if event == "message":
             return await handle_incoming_message_raw(data, request_id, background_tasks, db)
         elif event == "message.status":
             return {"status": "acknowledged", "request_id": request_id}
@@ -97,11 +97,16 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     if "@g.us" in phone_raw:
         logger.info(f"[{request_id}] Ignoring group message from {phone_raw}")
         return {"status": "ignored_group", "request_id": request_id}
-    
     # FILTER 3: Ignore status/broadcast messages (numbers starting with 120363)
     if phone.startswith("120363") or phone.startswith("status"):
         logger.info(f"[{request_id}] Ignoring status/broadcast message from {phone}")
         return {"status": "ignored_status", "request_id": request_id}
+    
+    # FILTER 5: Ignore non-actionable or empty messages (system notifications)
+    message_type = data.get("type", "")
+    if not message_text.strip() and not has_media:
+        logger.info(f"[{request_id}] Ignoring empty/system message (type: {message_type})")
+        return {"status": "ignored_empty", "request_id": request_id}
     
     # FILTER 4: Only process valid phone numbers (6-15 digits)
     if not phone.isdigit() or len(phone) < 6 or len(phone) > 15:
@@ -112,24 +117,52 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     # WAHA sends both 'message' and 'message.any' events for the same message
     dedup_key = f"msg:{message_id}"
     try:
-        if redis_client.exists(dedup_key):
+        is_new = redis_client.setnx(dedup_key, "1")
+        if not is_new:
             logger.info(f"[{request_id}] Duplicate message {message_id}, skipping")
             return {"status": "duplicate", "request_id": request_id, "message_id": message_id}
         # Mark as processed for 60 seconds
-        redis_client.setex(dedup_key, 60, "1")
+        redis_client.expire(dedup_key, 60)
     except Exception as e:
         logger.warning(f"[{request_id}] Redis deduplication failed: {e}, continuing anyway")
     
     logger.info(f"[{request_id}] Processing message from {phone}: {message_text[:50]}")
     
+    # Extract WhatsApp display name from _data.notifyName
+    whatsapp_name = None
+    _data = data.get("_data", {})
+    if isinstance(_data, dict):
+        whatsapp_name = _data.get("notifyName")
+    
+    # Resolve LID to real phone number if the sender uses @lid format
+    real_phone = phone
+    if "@lid" in phone_raw:
+        try:
+            from app.services.waha_client import WAHAClient
+            waha = WAHAClient(session="default")
+            resolved = waha.resolve_lid(phone)
+            if resolved:
+                logger.info(f"[{request_id}] Resolved LID {phone} -> {resolved}")
+                real_phone = resolved
+            else:
+                logger.info(f"[{request_id}] Could not resolve LID {phone}, using as-is")
+        except Exception as e:
+            logger.warning(f"[{request_id}] LID resolution failed: {e}, using LID as phone")
+    
     # Rate limit check
-    if not rate_limiter.allow_request(phone, limit=settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
-        logger.warning(f"[{request_id}] Rate limit exceeded for {phone}")
+    if not rate_limiter.allow_request(real_phone, limit=settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
+        logger.warning(f"[{request_id}] Rate limit exceeded for {real_phone}")
         return {"status": "rate_limited", "request_id": request_id}
     
     try:
         # Get or create user and conversation
-        user = get_or_create_user(phone, db)
+        user = get_or_create_user(real_phone, db, whatsapp_name=whatsapp_name)
+        
+        # Check if user is blocked
+        if user.is_blocked:
+            logger.info(f"[{request_id}] User {real_phone} is blocked, ignoring message")
+            return {"status": "blocked", "request_id": request_id}
+        
         conversation = get_or_create_conversation(user.id, db)
         
         # Save user message
@@ -140,12 +173,13 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
             db=db
         )
         
-        logger.info(f"[{request_id}] Message saved from user {user.id} ({phone})")
+        logger.info(f"[{request_id}] Message saved from user {user.id} ({real_phone})")
         
         # Send auto-reply in background
         background_tasks.add_task(
             send_auto_reply,
-            phone=phone,
+            phone=real_phone,
+            phone_raw=phone_raw,  # sertakan suffix @lid / @c.us
             user_message=message_text,
             request_id=request_id
         )
@@ -223,9 +257,74 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
     )
 
 
-async def send_auto_reply(phone: str, user_message: str, request_id: str):
+def markdown_to_whatsapp(text: str) -> str:
+    """Convert standard Markdown to WhatsApp formatting"""
+    import re
+    # Convert bold **text** to *text*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Convert headers # Header to *Header*
+    text = re.sub(r'^(?:#+)\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # Convert lists * or - to • 
+    text = re.sub(r'^(\s*)[*\-]\s+', r'\1• ', text, flags=re.MULTILINE)
+    return text
+
+
+def format_sources_for_whatsapp(
+    sources_metadata: list,
+    min_score: float = 0.0,
+    max_sources: int = 3,
+) -> str:
     """
-    Send AI-powered auto-reply using RAG system
+    Format source documents into WhatsApp-friendly text.
+    Groups multiple pages from the same file into a single line.
+    """
+    relevant = [
+        s for s in sources_metadata
+        if s.get('score', 0) >= min_score
+    ]
+    if not relevant:
+        return ""
+
+    # Group by file_name
+    grouped_sources = {}
+    for s in relevant:
+        file_name = s.get('file_name') or s.get('title') or 'Document'
+        page = s.get('page_number')
+        pages = s.get('page_numbers')
+        url = s.get('url')
+        
+        if file_name not in grouped_sources:
+            grouped_sources[file_name] = {'pages': set(), 'url': url}
+            
+        if pages and isinstance(pages, list):
+            grouped_sources[file_name]['pages'].update(pages)
+        elif page:
+            grouped_sources[file_name]['pages'].add(page)
+
+    lines = ["\n\n📚 *Sumber:*"]
+    for i, (file_name, data) in enumerate(grouped_sources.items(), 1):
+        if i > max_sources:
+            break
+            
+        url = data['url']
+        page_set = sorted(list(data['pages']))
+        
+        if url:
+            lines.append(f"{i}. [{file_name}]({url})")
+        elif page_set:
+            page_str = ", ".join(str(p) for p in page_set)
+            lines.append(f"{i}. {file_name} (hal. {page_str})")
+        else:
+            lines.append(f"{i}. {file_name}")
+
+    return "\n".join(lines)
+
+
+async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_raw: str = None):
+    """
+    Send AI-powered auto-reply using RAG system.
+    phone_raw: Full number with suffix (@c.us / @lid) from WAHA.
+               Required because newer WhatsApp accounts use @lid instead of @c.us.
     """
     from app.database.session import get_db
     
@@ -236,7 +335,10 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
         waha = WAHAClient(session="default")
         
         # Send typing indicator
-        waha.send_typing(to=phone)
+        if phone_raw:
+            waha.send_typing(to=phone, chat_id=phone_raw)
+        else:
+            waha.send_typing(to=phone)
         logger.info(f"[{request_id}] Typing indicator sent")
         
         # Get database session
@@ -261,11 +363,60 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
             )
             
             reply_text = response['text']
+            sources_metadata = response.get('sources_metadata', [])
             logger.info(f"[{request_id}] AI response generated: {reply_text[:100]}...")
             
-            # Send message via WAHA
-            logger.info(f"[{request_id}] Sending message to {phone}")
-            result = waha.send_message(to=phone, text=reply_text)
+            # Log retrieved source documents
+            if sources_metadata:
+                logger.info(f"[{request_id}] Sources ({len(sources_metadata)} docs):")
+                for i, src in enumerate(sources_metadata, 1):
+                    logger.info(
+                        f"  [{i}] {src.get('file_name', '-')} "
+                        f"p.{src.get('page_number', '-')} "
+                        f"score={src.get('score', 0):.3f}"
+                    )
+            else:
+                logger.warning(f"[{request_id}] No source documents retrieved")
+            
+            # Append source references to reply
+            # Use regex to find all citations like [1], [1, 2]
+            import re
+            citations = re.findall(r'\[([\d,\s]+)\]', reply_text)
+            cited_indices = set()
+            for citation in citations:
+                for num in re.split(r'[,\s]+', citation):
+                    if num.strip().isdigit():
+                        cited_indices.add(int(num.strip()))
+            
+            # If the LLM cited specific indices, filter sources_metadata
+            if cited_indices:
+                cited_metadata = []
+                for idx in cited_indices:
+                    if 1 <= idx <= len(sources_metadata):
+                        cited_metadata.append(sources_metadata[idx - 1])
+                # We can skip the min_score threshold here since the LLM explicitly used it
+                sources_text = format_sources_for_whatsapp(cited_metadata, min_score=0.0)
+            else:
+                # If LLM didn't cite anything (e.g. said "I don't know"), don't append sources
+                sources_text = ""
+                
+            # Clean up the citations from reply text
+            clean_reply_text = re.sub(r'\s*\[[\d,\s]+\]', '', reply_text).strip()
+            
+            # Format markdown to WhatsApp
+            clean_reply_text = markdown_to_whatsapp(clean_reply_text)
+            
+            if sources_text:
+                reply_text = clean_reply_text + sources_text
+                logger.info(f"[{request_id}] Sources appended to reply. Cited indices: {cited_indices}")
+            else:
+                reply_text = clean_reply_text
+                logger.info(f"[{request_id}] No high-relevance sources to append")
+            
+            # Use phone_raw (@lid/@c.us) as chat_id for newer WhatsApp accounts
+            chat_id = phone_raw if phone_raw else None
+            logger.info(f"[{request_id}] Sending message to {phone} (chat_id={chat_id})")
+            result = waha.send_message(to=phone, text=reply_text, chat_id=chat_id)
             logger.info(f"[{request_id}] WAHA send result: {result}")
             
             logger.info(
@@ -286,7 +437,7 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str):
         try:
             waha = WAHAClient(session="default")
             error_msg = "Maaf, saya mengalami kesulitan memproses permintaan Anda. Silakan coba lagi dalam beberapa saat. 😊"
-            waha.send_message(to=phone, text=error_msg)
+            waha.send_message(to=phone, text=error_msg, chat_id=phone_raw if phone_raw else None)
             logger.info(f"[{request_id}] Error message sent to user")
         except Exception as send_error:
             logger.error(f"[{request_id}] Failed to send error message: {str(send_error)}")

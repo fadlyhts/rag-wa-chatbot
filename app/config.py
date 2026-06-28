@@ -47,7 +47,13 @@ class Settings(BaseSettings):
     GEMINI_MAX_TOKENS: int = 8192  # Gemini supports up to 8192 tokens
     GEMINI_TEMPERATURE: float = 0.7
     
+    # Vertex AI
+    USE_VERTEX_AI: bool = False
+    VERTEX_PROJECT_ID: str = ""
+    VERTEX_LOCATION: str = "us-central1"
+    
     # RAG Settings
+    VECTOR_SIZE: int = 768
     RAG_CHUNK_SIZE: int = 512
     RAG_CHUNK_OVERLAP: int = 50
     RAG_TOP_K: int = 5

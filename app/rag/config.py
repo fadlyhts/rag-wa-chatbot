@@ -25,6 +25,11 @@ class RAGConfig:
     gemini_max_tokens: int = settings.GEMINI_MAX_TOKENS
     gemini_temperature: float = settings.GEMINI_TEMPERATURE
     
+    # Vertex AI Settings
+    use_vertex_ai: bool = settings.USE_VERTEX_AI
+    vertex_project_id: str = settings.VERTEX_PROJECT_ID
+    vertex_location: str = settings.VERTEX_LOCATION
+    
     # Qdrant Settings
     qdrant_url: str = settings.QDRANT_URL
     qdrant_api_key: str = settings.QDRANT_API_KEY
@@ -40,8 +45,8 @@ class RAGConfig:
     
     # Vector size depends on embedding model:
     # - OpenAI text-embedding-3-small: 1536
-    # - Gemini gemini-embedding-001: 3072
-    vector_size: int = 3072 if settings.AI_PROVIDER == "gemini" else 1536
+    # - Gemini text-embedding-004: 768
+    vector_size: int = settings.VECTOR_SIZE
     
     # RAG Settings
     chunk_size: int = settings.RAG_CHUNK_SIZE

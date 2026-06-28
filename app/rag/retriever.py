@@ -8,6 +8,9 @@ from app.rag.factory import get_embeddings_service
 
 logger = logging.getLogger(__name__)
 
+# LangChain Document
+from langchain_core.documents import Document
+
 
 class Retriever:
     """Retriever for semantic search"""
@@ -169,3 +172,85 @@ class Retriever:
 
 # Global retriever instance
 retriever = Retriever()
+
+
+def qdrant_result_to_document(result: Dict[str, Any]) -> Document:
+    """
+    Convert a single Qdrant search result to a LangChain Document.
+    """
+    payload: Dict[str, Any] = result.get("payload", {})
+
+    file_name: str = payload.get("file_name") or payload.get("title", "unknown_file")
+    page_number: Optional[int] = payload.get("page_number") or payload.get("chunk_index")
+    source_url: Optional[str] = payload.get("url") or payload.get("source_url")
+
+    metadata: Dict[str, Any] = {
+        "file_name":    file_name,
+        "page_number":  page_number,
+        "url":          source_url,
+        "document_id":  payload.get("document_id"),
+        "title":        payload.get("title", "Untitled"),
+        "content_type": payload.get("content_type", "unknown"),
+        "chunk_index":  payload.get("chunk_index"),
+        "total_chunks": payload.get("total_chunks"),
+        "doc_metadata": payload.get("doc_metadata", {}),
+        "score":        result.get("score", 0.0),
+        "qdrant_id":    result.get("id"),
+    }
+
+    return Document(
+        page_content=payload.get("content", ""),
+        metadata=metadata,
+    )
+
+
+class LCELRetriever:
+    """
+    Thin wrapper around the existing Qdrant VectorStore
+    to be used as a Runnable in the LCEL chain.
+    """
+
+    def __init__(
+        self,
+        top_k: int = rag_config.top_k,
+        min_score: float = rag_config.min_score,
+    ):
+        self.top_k = top_k
+        self.min_score = min_score
+
+    def retrieve(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Retrieve and convert to LangChain Documents."""
+        embeddings_svc = get_embeddings_service()
+
+        query_vector = embeddings_svc.generate_embedding(query)
+        raw_results = vector_store.search(
+            query_vector=query_vector,
+            limit=self.top_k,
+            score_threshold=self.min_score,
+            filter_conditions=filters,
+        )
+
+        docs = [qdrant_result_to_document(r) for r in raw_results]
+        logger.info(f"[LCELRetriever] Retrieved {len(docs)} documents")
+        return docs
+
+    async def aretrieve(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        embeddings_svc = get_embeddings_service()
+        query_vector = await embeddings_svc.generate_embedding_async(query)
+        raw_results = vector_store.search(
+            query_vector=query_vector,
+            limit=self.top_k,
+            score_threshold=self.min_score,
+            filter_conditions=filters,
+        )
+        docs = [qdrant_result_to_document(r) for r in raw_results]
+        logger.info(f"[LCELRetriever] Retrieved {len(docs)} documents (async)")
+        return docs

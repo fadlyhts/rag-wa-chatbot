@@ -25,6 +25,7 @@ class Document(Base):
     
     # New columns for admin panel
     category_id = Column(Integer, ForeignKey("document_categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    division_id = Column(Integer, ForeignKey("divisions.id", ondelete="SET NULL"), nullable=True, index=True)
     file_path = Column(String(500), nullable=True)
     file_size = Column(Integer, nullable=True)  # Size in bytes
     file_type = Column(String(50), nullable=True)  # pdf, docx, txt, md
@@ -39,6 +40,7 @@ class Document(Base):
     
     # Relationships
     category = relationship("DocumentCategory", back_populates="documents")
+    division = relationship("Division", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
     
     __table_args__ = (
