@@ -100,6 +100,7 @@ class UserService:
                 messages_count=messages_count,
                 last_active=user.last_active.isoformat() if user.last_active else "",
                 status="blocked" if user.is_blocked else "active",
+                division_id=user.division_id,
             )
             items.append(item)
 
@@ -177,6 +178,7 @@ class UserService:
             last_active=user.last_active.isoformat() if user.last_active else "",
             status="blocked" if user.is_blocked else "active",
             notes=user.notes,
+            division_id=user.division_id,
             conversations=conv_items,
             total_tokens_used=int(total_tokens or 0),
             avg_response_time_ms=int(avg_response_time or 0),
@@ -250,6 +252,34 @@ class UserService:
 
         logger.info(f"Updated notes for user {user_id}")
         return {"success": True, "message": "Notes updated successfully"}
+
+    def create_user(self, db: Session, user_data: Any) -> Dict[str, Any]:
+        """
+        Create a new WhatsApp user manually
+        """
+        phone = ''.join(filter(str.isdigit, user_data.phone_number))
+        if not phone:
+            raise ValueError("Invalid phone number format")
+
+        existing = db.query(User).filter(User.phone_number == phone).first()
+        if existing:
+            raise ValueError("Phone number already registered")
+
+        new_user = User(
+            phone_number=phone,
+            whatsapp_name=user_data.whatsapp_name,
+            division_id=user_data.division_id,
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        logger.info(f"Manually created user {new_user.id} with phone {phone}")
+        return {
+            "success": True,
+            "message": "User created successfully",
+            "user_id": new_user.id
+        }
 
     def export_users(
         self,
