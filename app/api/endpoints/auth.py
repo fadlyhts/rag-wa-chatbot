@@ -61,7 +61,8 @@ async def login(
                 "id": admin.id,
                 "username": admin.username,
                 "email": admin.email,
-                "role": admin.role
+                "role": admin.role,
+                "division_id": admin.division_id
             }
         )
         
