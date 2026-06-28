@@ -239,7 +239,7 @@ class GeminiLCELWrapper:
     (accepts LangChain message list, returns string).
     """
 
-    def invoke(self, messages: list) -> str:
+    def invoke(self, messages: list) -> Dict[str, Any]:
         converted: List[Dict[str, str]] = []
         for msg in messages:
             if isinstance(msg, SystemMessage):
@@ -250,9 +250,9 @@ class GeminiLCELWrapper:
                 converted.append({"role": "assistant", "content": msg.content})
 
         result = gemini_generator.generate(converted)
-        return result.get("content") or result.get("text", "")
+        return result
 
-    async def ainvoke(self, messages: list) -> str:
+    async def ainvoke(self, messages: list) -> Dict[str, Any]:
         converted: List[Dict[str, str]] = []
         for msg in messages:
             if isinstance(msg, SystemMessage):
@@ -263,4 +263,4 @@ class GeminiLCELWrapper:
                 converted.append({"role": "assistant", "content": msg.content})
 
         result = await gemini_generator.generate_async(converted)
-        return result.get("content") or result.get("text", "")
+        return result
