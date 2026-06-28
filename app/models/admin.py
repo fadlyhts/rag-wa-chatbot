@@ -1,7 +1,7 @@
 """Admin user model for authentication"""
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
-from sqlalchemy.sql import func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum, ForeignKey
+from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.base import Base
 import enum
@@ -27,6 +27,12 @@ class Admin(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    
+    # Division association
+    division_id = Column(Integer, ForeignKey("divisions.id", ondelete="SET NULL"), nullable=True, index=True)
+    
+    # Relationships
+    division = relationship("Division")
     
     def __repr__(self):
         return f"<Admin(id={self.id}, username={self.username}, role={self.role})>"
