@@ -40,6 +40,7 @@ class FileProcessor:
         title: str,
         content_type: str = "document",
         category_id: Optional[int] = None,
+        division_id: Optional[int] = None,
         file_size: Optional[int] = None,
         file_type: Optional[str] = None
     ) -> Document:
@@ -63,6 +64,7 @@ class FileProcessor:
             content="",  # Will be filled during processing
             content_type=content_type,
             category_id=category_id,
+            division_id=division_id,
             file_path=file_path,
             file_size=file_size,
             file_type=file_type,
@@ -185,6 +187,7 @@ class FileProcessor:
                     'page_number': chunk_info["page_number"],
                     'page_numbers': chunk_info["page_numbers"],
                     'category_id': doc.category_id,
+                    'division_id': doc.division_id,
                     # Heading metadata from semantic chunking
                     'heading': chunk_info.get("heading"),
                     'parent_heading': chunk_info.get("parent_heading"),
