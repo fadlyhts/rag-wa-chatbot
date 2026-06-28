@@ -48,6 +48,27 @@ class DocumentCategoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class DocumentCategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class DocumentCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class DivisionCreate(BaseModel):
+    name: str
+
+class DivisionUpdate(BaseModel):
+    name: Optional[str] = None
+
+class DivisionResponse(BaseModel):
+    id: int
+    name: str
+    
+    class Config:
+        from_attributes = True
+
 
 class DocumentListItem(BaseModel):
     """Document list item (summary)"""
@@ -60,6 +81,8 @@ class DocumentListItem(BaseModel):
     chunks_count: int
     category_id: Optional[int] = None
     category_name: Optional[str] = None
+    division_id: Optional[int] = None
+    division_name: Optional[str] = None
     upload_date: datetime
     processed_at: Optional[datetime] = None
     is_active: bool
