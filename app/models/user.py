@@ -1,6 +1,6 @@
 """User model"""
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.base import Base
@@ -20,8 +20,10 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     last_active = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_blocked = Column(Boolean, default=False)
+    division_id = Column(Integer, ForeignKey("divisions.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Relationships
+    division = relationship("Division", back_populates="users")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     analytics = relationship("Analytics", back_populates="user", cascade="all, delete-orphan")
