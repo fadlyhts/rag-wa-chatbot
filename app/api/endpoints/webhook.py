@@ -51,7 +51,7 @@ async def webhook(
         logger.info(f"[{request_id}] Webhook event: {event}")
         
         # Handle based on event type
-        if event == "message" or event == "message.any":
+        if event == "message":
             return await handle_incoming_message_raw(data, request_id, background_tasks, db)
         elif event == "message.status":
             return {"status": "acknowledged", "request_id": request_id}
@@ -97,11 +97,16 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     if "@g.us" in phone_raw:
         logger.info(f"[{request_id}] Ignoring group message from {phone_raw}")
         return {"status": "ignored_group", "request_id": request_id}
-    
     # FILTER 3: Ignore status/broadcast messages (numbers starting with 120363)
     if phone.startswith("120363") or phone.startswith("status"):
         logger.info(f"[{request_id}] Ignoring status/broadcast message from {phone}")
         return {"status": "ignored_status", "request_id": request_id}
+    
+    # FILTER 5: Ignore non-actionable or empty messages (system notifications)
+    message_type = data.get("type", "")
+    if not message_text.strip() and not has_media:
+        logger.info(f"[{request_id}] Ignoring empty/system message (type: {message_type})")
+        return {"status": "ignored_empty", "request_id": request_id}
     
     # FILTER 4: Only process valid phone numbers (6-15 digits)
     if not phone.isdigit() or len(phone) < 6 or len(phone) > 15:
@@ -112,11 +117,12 @@ async def handle_incoming_message_raw(data: dict, request_id: str, background_ta
     # WAHA sends both 'message' and 'message.any' events for the same message
     dedup_key = f"msg:{message_id}"
     try:
-        if redis_client.exists(dedup_key):
+        is_new = redis_client.setnx(dedup_key, "1")
+        if not is_new:
             logger.info(f"[{request_id}] Duplicate message {message_id}, skipping")
             return {"status": "duplicate", "request_id": request_id, "message_id": message_id}
         # Mark as processed for 60 seconds
-        redis_client.setex(dedup_key, 60, "1")
+        redis_client.expire(dedup_key, 60)
     except Exception as e:
         logger.warning(f"[{request_id}] Redis deduplication failed: {e}, continuing anyway")
     
@@ -251,6 +257,17 @@ async def handle_message_status(payload: WebhookPayload, request_id: str):
     )
 
 
+def markdown_to_whatsapp(text: str) -> str:
+    """Convert standard Markdown to WhatsApp formatting"""
+    import re
+    # Convert bold **text** to *text*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Convert headers # Header to *Header*
+    text = re.sub(r'^(?:#+)\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # Convert lists * or - to • 
+    text = re.sub(r'^(\s*)[*\-]\s+', r'\1• ', text, flags=re.MULTILINE)
+    return text
+
 
 def format_sources_for_whatsapp(
     sources_metadata: list,
@@ -380,11 +397,14 @@ async def send_auto_reply(phone: str, user_message: str, request_id: str, phone_
                 # We can skip the min_score threshold here since the LLM explicitly used it
                 sources_text = format_sources_for_whatsapp(cited_metadata, min_score=0.0)
             else:
-                # Fallback: if LLM failed to cite, use default threshold behavior
-                sources_text = format_sources_for_whatsapp(sources_metadata, min_score=0.60)
+                # If LLM didn't cite anything (e.g. said "I don't know"), don't append sources
+                sources_text = ""
                 
             # Clean up the citations from reply text
             clean_reply_text = re.sub(r'\s*\[[\d,\s]+\]', '', reply_text).strip()
+            
+            # Format markdown to WhatsApp
+            clean_reply_text = markdown_to_whatsapp(clean_reply_text)
             
             if sources_text:
                 reply_text = clean_reply_text + sources_text
