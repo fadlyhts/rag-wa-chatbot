@@ -124,7 +124,7 @@ def build_rag_chain_with_sources(
     )
 
     # Helper for Step 5 & 6: Run LLM
-    def _run_llm(inputs: Dict[str, Any]) -> str:
+    def _run_llm(inputs: Dict[str, Any]) -> Dict[str, Any]:
         # Step 5: Build messages for LLM
         prompt_value = LCEL_RAG_PROMPT.invoke({
             "context":              inputs["context"],
@@ -151,9 +151,15 @@ def build_rag_chain_with_sources(
         })
         # Step 5, 6 & 7: Run LLM and Extract source metadata for WhatsApp
         | RunnableLambda(lambda x: {
-            "answer":           _run_llm(x),
+            "llm_result":       _run_llm(x),
             "source_documents": x["source_documents"],
             "sources_metadata": extract_sources_metadata(x["source_documents"]),
+        })
+        | RunnableLambda(lambda x: {
+            "answer":           x["llm_result"].get("content", ""),
+            "tokens_used":      x["llm_result"].get("tokens_used", 0),
+            "source_documents": x["source_documents"],
+            "sources_metadata": x["sources_metadata"],
         })
     )
 
@@ -213,13 +219,14 @@ class RAGChainWithSources:
             })
 
             answer            = result["answer"]
+            tokens_used       = result.get("tokens_used", 0)
             source_documents  = result["source_documents"]
             sources_metadata  = result["sources_metadata"]
 
             logger.info(
                 f"[User {user_id}] LCEL RAG completed: "
                 f"{int((time.time()-start)*1000)}ms, "
-                f"{len(source_documents)} docs"
+                f"{len(source_documents)} docs, {tokens_used} tokens"
             )
 
             return {
@@ -231,7 +238,7 @@ class RAGChainWithSources:
                 "docs_retrieved":   len(source_documents),
                 "total_time_ms":    int((time.time() - start) * 1000),
                 "scores":           [s.get("score", 0) for s in sources_metadata],
-                "tokens":           0,
+                "tokens":           tokens_used,
                 "retrieval_time_ms":0,
                 "generation_time_ms":0,
             }
@@ -286,7 +293,9 @@ class RAGChainWithSources:
             })
             
             # Step 6: Generate response with LLM
-            answer = await _llm_instance.ainvoke(prompt_value.to_messages())
+            llm_result = await _llm_instance.ainvoke(prompt_value.to_messages())
+            answer = llm_result.get("content", "")
+            tokens_used = llm_result.get("tokens_used", 0)
 
             # Step 7: Extract source metadata for WhatsApp formatting
             sources_metadata = extract_sources_metadata(docs)
@@ -294,7 +303,7 @@ class RAGChainWithSources:
             logger.info(
                 f"[User {user_id}] LCEL RAG async completed: "
                 f"{int((time.time()-start)*1000)}ms, "
-                f"{len(docs)} docs"
+                f"{len(docs)} docs, {tokens_used} tokens"
             )
 
             return {
@@ -306,7 +315,7 @@ class RAGChainWithSources:
                 "docs_retrieved":   len(docs),
                 "total_time_ms":    int((time.time() - start) * 1000),
                 "scores":           [s.get("score", 0) for s in sources_metadata],
-                "tokens":           0,
+                "tokens":           tokens_used,
                 "retrieval_time_ms":0,
                 "generation_time_ms":0,
             }
@@ -343,15 +352,17 @@ rag_chain = rag_chain_with_sources
 def generate_rag_response(
     query: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
-    user_id: Optional[int] = None
+    user_id: Optional[int] = None,
+    filters: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Generate RAG response (sync) - convenience function"""
-    return rag_chain.generate_response(query, conversation_history, user_id)
+    return rag_chain.generate_response(query, conversation_history, user_id, filters)
 
 async def generate_rag_response_async(
     query: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
-    user_id: Optional[int] = None
+    user_id: Optional[int] = None,
+    filters: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Generate RAG response (async) - convenience function"""
-    return await rag_chain.generate_response_async(query, conversation_history, user_id)
+    return await rag_chain.generate_response_async(query, conversation_history, user_id, filters)
