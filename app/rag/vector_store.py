@@ -243,9 +243,9 @@ class VectorStore:
             collection = self.client.get_collection(self.collection_name)
             return {
                 "name": self.collection_name,
-                "vectors_count": collection.vectors_count,
-                "points_count": collection.points_count,
-                "status": collection.status
+                "vectors_count": getattr(collection, 'vectors_count', getattr(collection, 'points_count', 0)),
+                "points_count": getattr(collection, 'points_count', 0),
+                "status": getattr(collection, 'status', 'green')
             }
         except Exception as e:
             logger.error(f"Error getting collection info: {e}")
