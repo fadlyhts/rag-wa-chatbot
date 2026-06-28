@@ -169,6 +169,15 @@ async def generate_ai_response(
     try:
         # Import RAG here to avoid circular imports
         from app.rag import generate_rag_response_async
+        from app.models.user import User
+        
+        # Get user's division
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        # Add division filter if user belongs to a division
+        filters = None
+        if user and user.division_id:
+            filters = {"division_id": user.division_id}
         
         # Get conversation history
         history = get_conversation_history(conversation_id, limit=5, db=db)
@@ -186,7 +195,8 @@ async def generate_ai_response(
         response = await generate_rag_response_async(
             query=user_message,
             conversation_history=formatted_history,
-            user_id=user_id
+            user_id=user_id,
+            filters=filters
         )
         
         response_time = int((time.time() - start_time) * 1000)
