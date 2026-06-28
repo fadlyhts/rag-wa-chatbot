@@ -9,7 +9,11 @@ import re
 import tempfile
 import time
 from pathlib import Path
-import PyPDF2
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
 import docx
 import tiktoken
 
@@ -114,7 +118,8 @@ class DocumentProcessor:
         re.compile(r'^\s*(?:.{0,15})?\bNo\.\s+(?:Dokumen|Revisi)\b', re.IGNORECASE),
         re.compile(r'^\s*(?:.{0,15})?\bTanggal\s+(?:Efektif|Terbit)\b', re.IGNORECASE),
         re.compile(r'^\s*(?:.{0,15})?\bJudul\s*:', re.IGNORECASE),
-        re.compile(r'^\s*(?:.{0,15})?\b(?:SISTEM MANAJEMEN|PT PERKEBUNAN NUSANTARA|INSTRUKSI KERJA|STANDARD OPERATING PROCEDURE|SOP)\b', re.IGNORECASE),
+        # Ensure company/doc types only match if they are standalone headers (short lines) or followed by typical header symbols
+        re.compile(r'^\s*(?:SISTEM MANAJEMEN|PT PERKEBUNAN NUSANTARA|INSTRUKSI KERJA|STANDARD OPERATING PROCEDURE|SOP)\s*(?:$|:|-)', re.IGNORECASE),
     ]
 
     def _clean_pages_boilerplate(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -564,11 +569,27 @@ class DocumentProcessor:
             List of dicts: [{"page_number": 1, "text": "..."}, ...]
         """
         pages: List[Dict[str, Any]] = []
-        with open(file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            for i, page in enumerate(pdf_reader.pages, 1):
-                page_text = page.extract_text() or ""
-                pages.append({"page_number": i, "text": page_text})
+        if PDFPLUMBER_AVAILABLE:
+            try:
+                with pdfplumber.open(file_path) as pdf:
+                    for i, page in enumerate(pdf.pages, 1):
+                        page_text = page.extract_text() or ""
+                        pages.append({"page_number": i, "text": page_text})
+            except Exception as e:
+                logger.warning(f"pdfplumber failed: {e}. Trying fallback.")
+                with open(file_path, 'rb') as file:
+                    import PyPDF2
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    for i, page in enumerate(pdf_reader.pages, 1):
+                        page_text = page.extract_text() or ""
+                        pages.append({"page_number": i, "text": page_text})
+        else:
+            with open(file_path, 'rb') as file:
+                import PyPDF2
+                pdf_reader = PyPDF2.PdfReader(file)
+                for i, page in enumerate(pdf_reader.pages, 1):
+                    page_text = page.extract_text() or ""
+                    pages.append({"page_number": i, "text": page_text})
         
         # If PDF has very little text per page on average, it's likely scanned with a digital watermark - use OCR
         total_text = "".join(p["text"] for p in pages)
@@ -609,8 +630,8 @@ class DocumentProcessor:
             logger.info(f"Performing OCR on image: {file_path}")
             image = Image.open(file_path)
             
-            # Perform OCR
-            text = pytesseract.image_to_string(image, lang='eng+ind')  # English + Indonesian
+            # Perform OCR (PSM 4 = Assume a single column of text of variable sizes)
+            text = pytesseract.image_to_string(image, lang='eng+ind', config='--psm 4')  # English + Indonesian
             
             logger.info(f"OCR extracted {len(text)} characters from image")
             return text
@@ -673,7 +694,8 @@ class DocumentProcessor:
                         img_path = image_paths[0]
                         
                         # Pass the file path directly to Tesseract, bypassing Python memory completely
-                        page_text = pytesseract.image_to_string(img_path, lang='eng+ind', timeout=60)
+                        # Use PSM 4 to preserve top-to-bottom single column reading order
+                        page_text = pytesseract.image_to_string(img_path, lang='eng+ind', config='--psm 4', timeout=60)
                         
                         # Fix Tesseract layout issues (orphan numbers separated from titles)
                         page_text = self._postprocess_ocr_text(page_text)
