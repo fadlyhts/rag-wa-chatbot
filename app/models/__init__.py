@@ -9,9 +9,11 @@ from app.models.admin import Admin, AdminRole
 from app.models.document_category import DocumentCategory
 from app.models.document_chunk import DocumentChunk
 from app.models.settings import Settings
+from app.models.division import Division
 
 __all__ = [
     "User",
+    "Division",
     "Conversation",
     "Message",
     "Document",
