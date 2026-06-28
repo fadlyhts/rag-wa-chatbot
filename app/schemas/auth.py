@@ -25,6 +25,7 @@ class AdminResponse(BaseModel):
     username: str
     email: Optional[str] = None
     role: str
+    division_id: Optional[int] = None
     is_active: bool
     created_at: datetime
     last_login: Optional[datetime] = None
@@ -39,6 +40,7 @@ class AdminCreate(BaseModel):
     email: Optional[str] = None
     password: str
     role: str = "admin"
+    division_id: Optional[int] = None
 
 
 class AdminUpdate(BaseModel):
@@ -47,3 +49,4 @@ class AdminUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    division_id: Optional[int] = None
