@@ -46,3 +46,7 @@ Thumbs.db
 # Monitoring
 prometheus_data/
 grafana_data/
+
+
+# Uploads
+uploads/
