@@ -12,9 +12,16 @@ class UserListItem(BaseModel):
     messages_count: int
     last_active: str
     status: str  # "active" or "blocked"
+    division_id: Optional[int] = None
 
     class Config:
         from_attributes = True
+
+class UserCreate(BaseModel):
+    """Create user request body"""
+    phone_number: str
+    whatsapp_name: Optional[str] = None
+    division_id: Optional[int] = None
 
 
 class UserListResponse(BaseModel):
@@ -45,6 +52,7 @@ class UserDetail(BaseModel):
     last_active: str
     status: str
     notes: Optional[str] = None
+    division_id: Optional[int] = None
     conversations: List[UserConversationItem]
     total_tokens_used: int = 0
     avg_response_time_ms: int = 0
