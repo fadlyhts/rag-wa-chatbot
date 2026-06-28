@@ -14,6 +14,7 @@ from app.schemas.user import (
     UserDetailResponse,
     BlockUserResponse,
     UpdateNotesRequest,
+    UserCreate,
 )
 from app.services.user_service import user_service
 
@@ -89,6 +90,22 @@ async def list_users(
         logger.error(f"Error listing users: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
 
+@router.post("/users")
+async def create_user(
+    request: UserCreate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin),
+):
+    """
+    Create a new WhatsApp user
+    """
+    try:
+        return user_service.create_user(db, request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
 @router.get("/users/{user_id}", response_model=UserDetailResponse)
 async def get_user_detail(
@@ -182,6 +199,38 @@ async def update_user_notes(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating notes for user {user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to update notes: {str(e)}")
+
+from pydantic import BaseModel
+
+class UpdateDivisionRequest(BaseModel):
+    division_id: Optional[int] = None
+
+@router.put("/users/{user_id}/division")
+async def update_user_division(
+    user_id: int,
+    request: UpdateDivisionRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_active_admin),
+):
+    """
+    Update user division
+    """
+    try:
+        from app.models.user import User
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        user.division_id = request.division_id
+        db.commit()
+        db.refresh(user)
+        
+        return {"status": "success", "message": "User division updated"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating division for user {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update division: {str(e)}")
