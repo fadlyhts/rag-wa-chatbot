@@ -148,7 +148,7 @@ class GeminiEmbeddingsService:
                 logger.info(f"Generating embeddings for {len(texts_to_generate)} texts (cached: {len(texts) - len(texts_to_generate)})")
                 
                 # Process in large batches (Vertex AI supports up to 250 instances per request)
-                BATCH_SIZE = 100  # Conservative batch size to avoid payload size limits
+                BATCH_SIZE = 40  # Conservative batch size to avoid payload size limits (20000 tokens max)
                 for batch_start in range(0, len(texts_to_generate), BATCH_SIZE):
                     batch_end = min(batch_start + BATCH_SIZE, len(texts_to_generate))
                     batch_texts = texts_to_generate[batch_start:batch_end]
