@@ -70,7 +70,7 @@ class DocumentProcessor:
         # Patterns for SOP / Instruksi Kerja headers
         patterns = {
             "Jenis Dokumen": r'\b(INSTRUKSI\s+KERJA|STANDARD\s+OPERATING\s+PROCEDURE|SOP)\b',
-            "Judul": r'Judul\s*:\s*([^\n]+)',
+            "Judul": r'Judul(?:\s+Dokumen)?\s*:\s*([\s\S]*?)(?=\n\s*(?:\n|Cap|PT PERKEBUNAN|Nomor|Jenis|Status|$))',
             "No. Dokumen": r'No\.?\s*Dokumen\s*:\s*([^\n]+)',
             "No. Revisi": r'No\.?\s*Revisi\s*:\s*([^\n]+)',
             "Tanggal Terbit": r'Tanggal\s*Terbit\s*:\s*([^\n]+)'
@@ -83,6 +83,8 @@ class DocumentProcessor:
                 
                 # Special fix for "Judul" which often catches the "Cap :" column in the same line
                 if key == "Judul":
+                    val = val.replace('\n', ' ').replace('\r', '')
+                    val = re.sub(r'\s+', ' ', val).strip()
                     val = re.sub(r'\s*Cap\b.*$', '', val, flags=re.IGNORECASE).strip()
                     
                 # Special fix for OCR misreading numbers in "No. Revisi" (e.g., 'OL' -> '01')
@@ -111,7 +113,7 @@ class DocumentProcessor:
         re.compile(r'E-?mail\s*:\s*\S+', re.IGNORECASE),
         re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b', re.IGNORECASE),
         # Postal / mailing address lines
-        re.compile(r'(?:Jl\.|Jalan)\s+.{5,}', re.IGNORECASE),
+        re.compile(r'\b(?:Jl\.|Jalan)\b\s+.{5,}', re.IGNORECASE),
         re.compile(r'Kotak\s+Pos\s+\d+', re.IGNORECASE),
         # Page numbers / document control lines
         re.compile(r'^\s*(?:Page|Halaman)\s+\d+', re.IGNORECASE),
@@ -1167,6 +1169,9 @@ class DocumentProcessor:
             
             # Chunk text
             chunks = self.chunk_text(text)
+            
+            # Prepend document title to chunk text to improve vector search relevance
+            chunks = [f"Dokumen: {title}\n\n{chunk}" for chunk in chunks]
             
             # Generate embeddings for all chunks
             logger.info(f"Generating embeddings for {len(chunks)} chunks")
