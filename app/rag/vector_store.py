@@ -78,12 +78,23 @@ class VectorStore:
             
             if self.collection_name not in collection_names:
                 logger.info(f"Creating collection: {self.collection_name}")
+                from qdrant_client import models
+                
+                sparse_vectors_config = None
+                if getattr(rag_config, 'RAG_HYBRID_SEARCH', False):
+                    sparse_vectors_config = {
+                        "text-sparse": models.SparseVectorParams(
+                            modifier=models.Modifier.IDF
+                        )
+                    }
+                    
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(
                         size=self.vector_size,
                         distance=Distance.COSINE
-                    )
+                    ),
+                    sparse_vectors_config=sparse_vectors_config
                 )
                 logger.info(f"Collection created: {self.collection_name}")
             else:
@@ -108,7 +119,8 @@ class VectorStore:
         self,
         ids: List[str],
         vectors: List[List[float]],
-        payloads: List[Dict[str, Any]]
+        payloads: List[Dict[str, Any]],
+        sparse_vectors: Optional[List[Any]] = None
     ) -> bool:
         """
         Insert documents into vector store
@@ -124,14 +136,24 @@ class VectorStore:
         try:
             self._ensure_initialized()
             
-            points = [
-                PointStruct(
-                    id=doc_id,
-                    vector=vector,
-                    payload=payload
+            points = []
+            for i in range(len(ids)):
+                point_vector = vectors[i]
+                if sparse_vectors and len(sparse_vectors) > i:
+                    # SparseVector from fastembed is already in Qdrant model format or similar
+                    sv = sparse_vectors[i]
+                    point_vector = {
+                        "": vectors[i],
+                        "text-sparse": getattr(sv, 'as_object', lambda: sv)() if hasattr(sv, 'as_object') else sv
+                    }
+                    
+                points.append(
+                    PointStruct(
+                        id=ids[i],
+                        vector=point_vector,
+                        payload=payloads[i]
+                    )
                 )
-                for doc_id, vector, payload in zip(ids, vectors, payloads)
-            ]
             
             self.client.upsert(
                 collection_name=self.collection_name,
@@ -150,7 +172,8 @@ class VectorStore:
         query_vector: List[float],
         limit: int = None,
         score_threshold: float = None,
-        filter_conditions: Optional[Dict[str, Any]] = None
+        filter_conditions: Optional[Dict[str, Any]] = None,
+        sparse_query_vector: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """
         Search for similar documents
@@ -185,13 +208,43 @@ class VectorStore:
                     ]
                 )
             
-            results = self.client.query_points(
-                collection_name=self.collection_name,
-                query=query_vector,
-                limit=limit,
-                score_threshold=score_threshold,
-                query_filter=query_filter
-            ).points
+            from qdrant_client import models
+            
+            if sparse_query_vector and getattr(rag_config, 'RAG_HYBRID_SEARCH', False):
+                # Hybrid Search with Reciprocal Rank Fusion
+                prefetch = [
+                    models.Prefetch(
+                        query=query_vector,
+                        limit=limit * 2,
+                    ),
+                    models.Prefetch(
+                        query=models.SparseVector(
+                            indices=sparse_query_vector.indices,
+                            values=sparse_query_vector.values
+                        ),
+                        using="text-sparse",
+                        limit=limit * 2,
+                    )
+                ]
+                
+                results = self.client.query_points(
+                    collection_name=self.collection_name,
+                    prefetch=prefetch,
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    limit=limit,
+                    query_filter=query_filter
+                ).points
+                
+                # Re-ranker RRF scores are different scale, adjust threshold manually if needed
+            else:
+                # Standard dense search
+                results = self.client.query_points(
+                    collection_name=self.collection_name,
+                    query=query_vector,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    query_filter=query_filter
+                ).points
             
             # Format results
             formatted_results = [

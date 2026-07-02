@@ -17,6 +17,7 @@ from app.rag.document_processor import document_processor
 from app.rag.vector_store import vector_store
 from app.rag.factory import get_embeddings_service
 from app.database.session import SessionLocal
+from app.rag.config import rag_config
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,21 @@ class FileProcessor:
             
             # Update status to processing
             doc.embedding_status = "processing"
+            
+            # 1. Delete existing chunks in Qdrant
+            existing_chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).all()
+            if existing_chunks:
+                try:
+                    qdrant_ids = [chunk.qdrant_point_id for chunk in existing_chunks if chunk.qdrant_point_id]
+                    if qdrant_ids:
+                        self.vector_store.delete_documents(qdrant_ids)
+                        logger.info(f"Deleted {len(qdrant_ids)} existing points in Qdrant")
+                except Exception as e:
+                    logger.warning(f"Failed to delete existing points in Qdrant: {e}")
+                    
+                # 2. Delete existing chunks in DB
+                db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
+                
             db.commit()
             
             logger.info(f"Processing document {document_id}: {doc.title}")
@@ -149,6 +165,32 @@ class FileProcessor:
             # Chunk text using heading-aware semantic chunking
             # Falls back to sentence-based chunking for non-structured docs
             page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
+            
+            cover_info = self.document_processor._extract_cover_page_info(pages[:2])
+            
+            if cover_info:
+                judul = doc.doc_metadata.get('Judul', doc.title) if doc.doc_metadata else doc.title
+                no_dok = doc.doc_metadata.get('No. Dokumen', '') if doc.doc_metadata else ''
+                
+                qa_text = f"Informasi Pengesahan Dokumen SOP {judul}:\n"
+                if no_dok:
+                    qa_text += f"Nomor Dokumen: {no_dok}\n"
+                if cover_info.get('disusun_oleh'):
+                    qa_text += f"Pertanyaan: Siapa yang menyusun (pembuat) dokumen ini?\nJawaban: Dokumen SOP ini disusun oleh {cover_info['disusun_oleh']}.\n"
+                if cover_info.get('ditinjau_oleh'):
+                    qa_text += f"Pertanyaan: Siapa yang meninjau (mereview) dokumen ini?\nJawaban: Dokumen SOP ini ditinjau oleh {cover_info['ditinjau_oleh']}.\n"
+                if cover_info.get('disetujui_oleh'):
+                    qa_text += f"Pertanyaan: Siapa yang menyetujui (mengakui) dokumen ini?\nJawaban: Dokumen SOP ini disetujui oleh {cover_info['disetujui_oleh']}.\n"
+                
+                synthetic_chunk = {
+                    "text": qa_text,
+                    # Label this chunk as page 2 so the LLM cites it properly
+                    "page_number": 2,
+                    "page_numbers": [2],
+                    "heading": "Pengesahan Dokumen (Metadata)",
+                    "parent_heading": None,
+                }
+                page_chunks.insert(0, synthetic_chunk)            
             # Prepend document title to chunk text to improve vector search relevance
             chunk_texts = []
             for c in page_chunks:
@@ -212,11 +254,23 @@ class FileProcessor:
                 }
                 payloads.append(payload)
             
+            # Generate Sparse Embeddings for Hybrid Search if enabled
+            sparse_vectors = None
+            if getattr(rag_config, 'RAG_HYBRID_SEARCH', False):
+                try:
+                    from app.rag.embeddings_sparse import SparseEmbeddings
+                    sparse_embedder = SparseEmbeddings(model_name=rag_config.RAG_SPARSE_MODEL_NAME)
+                    logger.info(f"Generating sparse embeddings for {len(chunk_texts)} chunks")
+                    sparse_vectors = sparse_embedder.generate_sparse_embeddings_batch(chunk_texts)
+                except Exception as e:
+                    logger.error(f"Failed to generate sparse embeddings: {e}")
+            
             # Insert into Qdrant
             self.vector_store.insert_documents(
                 ids=chunk_ids,
                 vectors=embeddings,
-                payloads=payloads
+                payloads=payloads,
+                sparse_vectors=sparse_vectors
             )
             logger.info(f"Inserted {len(page_chunks)} chunks into Qdrant")
             

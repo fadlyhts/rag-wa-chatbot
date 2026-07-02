@@ -55,6 +55,10 @@ class RAGConfig:
     min_score: float = settings.RAG_MIN_SCORE
     enable_cache: bool = settings.RAG_ENABLE_CACHE
     
+    # Hybrid Search Settings
+    RAG_HYBRID_SEARCH: bool = settings.RAG_HYBRID_SEARCH
+    RAG_SPARSE_MODEL_NAME: str = settings.RAG_SPARSE_MODEL_NAME
+    
     # Redis Cache
     redis_url: str = settings.REDIS_URL
     cache_ttl: int = 3600  # 1 hour

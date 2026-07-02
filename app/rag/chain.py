@@ -61,17 +61,21 @@ def _format_docs(docs: List[Document]) -> str:
 
         page_info = f" | p.{page_num}" if page_num is not None else ""
         
-        header = f"[{i}] "
+        header_parts = [f"--- SUMBER {i} ---"]
+        header_parts.append(f"Judul: {doc_title}")
         if doc_number:
-            header += f"[{doc_type}: {doc_number}"
-            if doc_rev:
-                header += f" | Revisi: {doc_rev}"
-            header += "] "
-            
-        header += f"{doc_title} ({file_name}{page_info})"
+            header_parts.append(f"Nomor Dokumen: {doc_number}")
+        if doc_type:
+            header_parts.append(f"Jenis Dokumen: {doc_type}")
+        if doc_rev:
+            header_parts.append(f"Revisi: {doc_rev}")
+        header_parts.append(f"Nama File: {file_name}{page_info}")
+        header_parts.append(f"Relevansi: {score:.2f}")
+        
+        header = "\n".join(header_parts)
         
         parts.append(
-            f"{header} [Relevance: {score:.2f}]\n"
+            f"{header}\n\n"
             f"{doc.page_content}"
         )
 
