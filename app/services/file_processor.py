@@ -149,7 +149,23 @@ class FileProcessor:
             # Chunk text using heading-aware semantic chunking
             # Falls back to sentence-based chunking for non-structured docs
             page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
-            chunk_texts = [c["text"] for c in page_chunks]
+            # Prepend document title to chunk text to improve vector search relevance
+            chunk_texts = []
+            for c in page_chunks:
+                judul = doc.doc_metadata.get('Judul') if doc.doc_metadata else None
+                kategori = doc.doc_metadata.get('Jenis Dokumen') if doc.doc_metadata else None
+                
+                header_parts = []
+                if judul:
+                    header_parts.append(f"Judul Dokumen: {judul}")
+                else:
+                    header_parts.append(f"File Dokumen: {doc.title}")
+                    
+                if kategori:
+                    header_parts.append(f"Kategori: {kategori}")
+                    
+                header = "\n".join(header_parts)
+                chunk_texts.append(f"{header}\n\n{c['text']}")
             logger.info(f"Split into {len(page_chunks)} semantic chunks")
             
             # Generate embeddings
@@ -180,7 +196,7 @@ class FileProcessor:
                     'document_id': doc.id,
                     'title': doc.title,
                     'file_name': file_name,
-                    'content': chunk_info["text"],
+                    'content': chunk_texts[i],
                     'content_type': doc.content_type or "document",
                     'chunk_index': i,
                     'total_chunks': len(page_chunks),
@@ -209,8 +225,8 @@ class FileProcessor:
                 chunk_record = DocumentChunk(
                     document_id=doc.id,
                     chunk_index=i,
-                    chunk_text=chunk_info["text"],
-                    chunk_size=self.document_processor.count_tokens(chunk_info["text"]),
+                    chunk_text=chunk_texts[i],
+                    chunk_size=self.document_processor.count_tokens(chunk_texts[i]),
                     qdrant_point_id=chunk_id
                 )
                 db.add(chunk_record)
