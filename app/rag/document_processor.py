@@ -70,10 +70,10 @@ class DocumentProcessor:
         # Patterns for SOP / Instruksi Kerja headers
         patterns = {
             "Jenis Dokumen": r'\b(INSTRUKSI\s+KERJA|STANDARD\s+OPERATING\s+PROCEDURE|SOP)\b',
-            "Judul": r'Judul(?:\s+Dokumen)?\s*:\s*([\s\S]*?)(?=\n\s*(?:\n|Cap|PT PERKEBUNAN|Nomor|Jenis|Status|$))',
-            "No. Dokumen": r'No\.?\s*Dokumen\s*:\s*([^\n]+)',
-            "No. Revisi": r'No\.?\s*Revisi\s*:\s*([^\n]+)',
-            "Tanggal Terbit": r'Tanggal\s*Terbit\s*:\s*([^\n]+)'
+            "Judul": r'Judul(?:\s+Dokumen)?\s*:\s*([\s\S]*?)(?=\n\s*(?:Cap\b|PT PERKEBUNAN\b|Nomor\b|Jenis\b|Status\b|$))',
+            "No. Dokumen": r'(?:No\.?|Nomor)\s*Dokumen\s*[^:\n]*:\s*([^\n]+)',
+            "No. Revisi": r'(?:No\.?|Nomor)\s*(?:Revisi|Remisi)\s*[^:\n]*:\s*([^\n]+)',
+            "Tanggal Terbit": r'Tanggal\s*Terbit\s*[^:\n]*:\s*([^\n]+)'
         }
         
         for key, pattern in patterns.items():
@@ -85,7 +85,7 @@ class DocumentProcessor:
                 if key == "Judul":
                     val = val.replace('\n', ' ').replace('\r', '')
                     val = re.sub(r'\s+', ' ', val).strip()
-                    val = re.sub(r'\s*Cap\b.*$', '', val, flags=re.IGNORECASE).strip()
+                    val = re.sub(r'\s*Cap\b', '', val, flags=re.IGNORECASE).strip()
                     
                 # Special fix for OCR misreading numbers in "No. Revisi" (e.g., 'OL' -> '01')
                 if key == "No. Revisi":
@@ -93,6 +93,10 @@ class DocumentProcessor:
                 
                 # Clean up if Tesseract added weird characters at the end
                 val = re.sub(r'[^a-zA-Z0-9\s\.\-\/]', '', val).strip()
+                
+                # Special fix for OCR misreading K01 as KO1
+                if key == "No. Dokumen":
+                    val = re.sub(r'KO(\d)', r'K0\1', val, flags=re.IGNORECASE)
                 
                 if val:
                     metadata[key] = val

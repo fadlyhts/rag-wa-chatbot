@@ -219,7 +219,7 @@ async def delete_category(
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     search: Optional[str] = None,
     status: Optional[str] = None,
     category: Optional[int] = None,
