@@ -227,11 +227,22 @@ class LCELRetriever:
         embeddings_svc = get_embeddings_service()
 
         query_vector = embeddings_svc.generate_embedding(query)
+        
+        sparse_query_vector = None
+        if getattr(rag_config, 'RAG_HYBRID_SEARCH', False):
+            try:
+                from app.rag.embeddings_sparse import SparseEmbeddings
+                sparse_embedder = SparseEmbeddings(model_name=rag_config.RAG_SPARSE_MODEL_NAME)
+                sparse_query_vector = sparse_embedder.generate_sparse_embedding(query)
+            except Exception as e:
+                logger.error(f"Failed to generate sparse query embedding: {e}")
+                
         raw_results = vector_store.search(
             query_vector=query_vector,
             limit=self.top_k,
             score_threshold=self.min_score,
             filter_conditions=filters,
+            sparse_query_vector=sparse_query_vector
         )
 
         docs = [qdrant_result_to_document(r) for r in raw_results]
@@ -245,11 +256,23 @@ class LCELRetriever:
     ) -> List[Document]:
         embeddings_svc = get_embeddings_service()
         query_vector = await embeddings_svc.generate_embedding_async(query)
+        
+        sparse_query_vector = None
+        if getattr(rag_config, 'RAG_HYBRID_SEARCH', False):
+            try:
+                from app.rag.embeddings_sparse import SparseEmbeddings
+                sparse_embedder = SparseEmbeddings(model_name=rag_config.RAG_SPARSE_MODEL_NAME)
+                # fastembed doesn't have native async yet, so we call it sync (it's fast enough)
+                sparse_query_vector = sparse_embedder.generate_sparse_embedding(query)
+            except Exception as e:
+                logger.error(f"Failed to generate sparse query embedding async: {e}")
+                
         raw_results = vector_store.search(
             query_vector=query_vector,
             limit=self.top_k,
             score_threshold=self.min_score,
             filter_conditions=filters,
+            sparse_query_vector=sparse_query_vector
         )
         docs = [qdrant_result_to_document(r) for r in raw_results]
         logger.info(f"[LCELRetriever] Retrieved {len(docs)} documents (async)")
