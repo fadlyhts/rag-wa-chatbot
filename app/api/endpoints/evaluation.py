@@ -89,6 +89,7 @@ async def create_run(
             "limit": payload.limit,
             "division_id": payload.division_id,
             "category_id": payload.category_id,
+            "lexical_normalization": payload.lexical_normalization,
         },
     )
     db.add(run)

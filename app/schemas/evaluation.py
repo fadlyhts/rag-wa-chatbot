@@ -12,6 +12,8 @@ class EvaluationRunCreate(BaseModel):
     metrics: List[str] = ["bertscore", "bleu", "rouge", "ragas"]
     ragas_use_ground_truth: bool = True
     limit: Optional[int] = None  # run only first N questions (for quick testing)
+    # Text normalization for BLEU/ROUGE only: "none" | "basic" | "strong"
+    lexical_normalization: str = "basic"
     # Retrieval scope — mirrors production per-user access control.
     # Per-question division_id/category_id in the dataset override these run-level defaults.
     division_id: Optional[int] = None

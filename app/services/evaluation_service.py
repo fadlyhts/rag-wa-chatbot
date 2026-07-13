@@ -11,7 +11,7 @@ functions that need them, so the app can start even if they are not installed.
 import os
 import re
 import json
-import asyncio
+import time
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -24,6 +24,37 @@ logger = logging.getLogger(__name__)
 
 # Datasets live next to the existing evaluation scripts
 DATASET_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
+
+
+def _rag_generate(question: str, filters):
+    """Synchronous RAG call that honours retrieval filters (division/category).
+
+    Mirrors the sync LCEL chain but passes `filters` into retrieval. Done fully
+    synchronously ON PURPOSE: creating a fresh asyncio event loop per evaluation run
+    conflicts with the module-level async LLM client and raises
+    "got Future attached to a different loop" on the 2nd+ run in the same process.
+    """
+    from app.rag.chain import (
+        _llm_instance, _format_docs, extract_sources_metadata, LCEL_RAG_PROMPT,
+    )
+    from app.rag.retriever import LCELRetriever
+
+    start = time.time()
+    docs = LCELRetriever().retrieve(question.strip(), filters)
+    context = _format_docs(docs)
+    prompt_value = LCEL_RAG_PROMPT.invoke({
+        "context": context,
+        "conversation_history": "No conversation history yet.",
+        "question": question.strip(),
+    })
+    llm_result = _llm_instance.invoke(prompt_value.to_messages())
+    answer = llm_result.get("content", "") if isinstance(llm_result, dict) else str(llm_result)
+    return {
+        "answer": answer,
+        "source_documents": docs,
+        "sources_metadata": extract_sources_metadata(docs),
+        "total_time_ms": int((time.time() - start) * 1000),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -112,6 +143,40 @@ def save_uploaded_dataset(filename: str, content: bytes) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Metric helpers
 # --------------------------------------------------------------------------- #
+# Text normalization for lexical metrics (BLEU/ROUGE) only.
+# Rationale: conversational answers (greetings, emojis, citation markers) depress
+# n-gram overlap even when the answer is correct. Normalizing BOTH candidate and
+# reference isolates the substantive content. BERTScore/RAGAS are NOT normalized —
+# they already handle semantics.
+_CITATION_RE = re.compile(r"\[[\d,\s]+\]")
+_SYMBOL_RE = re.compile(r"[^\w\s.,%/-]", re.UNICODE)  # strips emoji & symbols, keeps words + basic punct
+_WS_RE = re.compile(r"\s+")
+_GREET_RE = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\bhalo\b[!,.\s]*", r"\bhai\b[!,.\s]*", r"\bhi\b[!,.\s]*",
+        r"tentu[,.]?\s*(saya akan|akan saya)?\s*bantu[.!]?",
+        r"berikut (adalah )?(informasi(nya)?|jawaban(nya)?)[:.]?",
+        r"semoga\s*(informasi(nya)?|ini|jawaban(nya)?)?\s*(membantu|bermanfaat)[!.]?",
+        r"ada (hal|yang)\s*(lain)?(\s*yang)?(\s*bisa)?(\s*saya)?\s*bantu\??",
+        r"\bkak\b", r"\bnih\b", r"\bdong\b",
+    ]
+]
+
+
+def _normalize_lexical(text: str, level: str) -> str:
+    """Normalize text for BLEU/ROUGE. level: 'none' | 'basic' | 'strong'."""
+    if not text or level == "none":
+        return text or ""
+    t = text.lower()
+    t = _CITATION_RE.sub(" ", t)                 # remove [1], [2, 3]
+    if level == "strong":
+        for pat in _GREET_RE:                    # remove greetings/closings/fillers
+            t = pat.sub(" ", t)
+    t = _SYMBOL_RE.sub(" ", t)                    # remove emoji & symbols
+    t = _WS_RE.sub(" ", t).strip()
+    return t
+
+
 def _bleu4(generated: str, reference: str) -> float:
     from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
     from nltk.tokenize import word_tokenize
@@ -254,6 +319,7 @@ def run_evaluation_task(run_id: int) -> None:
         limit = config.get("limit")
         default_division_id = config.get("division_id")
         default_category_id = config.get("category_id")
+        lexical_norm = config.get("lexical_normalization", "basic")  # none | basic | strong
 
         run.status = "running"
         db.commit()
@@ -265,12 +331,8 @@ def run_evaluation_task(run_id: int) -> None:
         db.commit()
 
         # --- 1. Collect RAG responses (creates item rows, updates progress) ---
-        # Use the ASYNC pipeline (same path production uses) because only that path
-        # honours the `filters` argument (division/category scope). The sync
-        # generate_response() ignores filters. Reuse one event loop for all questions.
-        from app.rag.chain import rag_chain
-
-        loop = asyncio.new_event_loop()
+        # Sync retrieval+generation that honours division/category filters
+        # (see _rag_generate — avoids the per-run asyncio event-loop conflict).
         items: List[EvaluationItem] = []
         eval_data = {"question": [], "answer": [], "contexts": [], "ground_truth": []}
 
@@ -298,11 +360,7 @@ def run_evaluation_task(run_id: int) -> None:
                 category_id=q_category,
             )
             try:
-                resp = loop.run_until_complete(
-                    rag_chain.generate_response_async(
-                        query=question, conversation_history=[], filters=filters or None
-                    )
-                )
+                resp = _rag_generate(question, filters or None)
                 answer = resp.get("answer") or resp.get("text") or ""
                 if isinstance(answer, list):
                     answer = " ".join(answer)
@@ -332,7 +390,6 @@ def run_evaluation_task(run_id: int) -> None:
             db.commit()
             logger.info(f"[eval {run_id}] collected {i}/{len(questions)}")
 
-        loop.close()
         has_gt = any(eval_data["ground_truth"])
 
         # --- 2. BLEU-4 + ROUGE-L (per item, deterministic) ---
@@ -343,11 +400,14 @@ def run_evaluation_task(run_id: int) -> None:
                 gen = item.answer or ""
                 if not ref or not gen:
                     continue
+                # Normalize BOTH sides for lexical metrics only (raw text kept in DB).
+                norm_gen = _normalize_lexical(gen, lexical_norm)
+                norm_ref = _normalize_lexical(ref, lexical_norm)
                 if "bleu" in metrics:
-                    item.bleu = _bleu4(gen, ref)
+                    item.bleu = _bleu4(norm_gen, norm_ref)
                 if scorer is not None:
                     try:
-                        s = scorer.score(ref, gen)
+                        s = scorer.score(norm_ref, norm_gen)
                         item.rougeL = float(s["rougeL"].fmeasure)
                     except Exception as e:
                         logger.warning(f"ROUGE error: {e}")
