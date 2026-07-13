@@ -8,9 +8,9 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.api.endpoints import (
-    webhook, health, messages, stats, test, auth, 
+    webhook, health, messages, stats, test, auth,
     documents, vector_db, dashboard, settings as settings_router,
-    users, conversations, admins
+    users, conversations, admins, evaluation
 )
 from app.database.session import engine
 from app.database.base import Base
@@ -129,6 +129,7 @@ app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(conversations.router, prefix="/api", tags=["conversations"])
 app.include_router(admins.router, prefix="/api", tags=["admins"])
+app.include_router(evaluation.router, prefix="/api", tags=["evaluation"])
 
 
 # Exception handlers
