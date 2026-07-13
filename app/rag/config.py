@@ -59,6 +59,9 @@ class RAGConfig:
     RAG_HYBRID_SEARCH: bool = settings.RAG_HYBRID_SEARCH
     RAG_SPARSE_MODEL_NAME: str = settings.RAG_SPARSE_MODEL_NAME
     
+    # Docling Parser
+    use_docling: bool = settings.USE_DOCLING
+    
     # Redis Cache
     redis_url: str = settings.REDIS_URL
     cache_ttl: int = 3600  # 1 hour
