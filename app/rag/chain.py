@@ -57,6 +57,7 @@ def _format_docs(docs: List[Document]) -> str:
         doc_type = doc_metadata.get("Jenis Dokumen", "Dokumen")
         doc_number = doc_metadata.get("No. Dokumen", "")
         doc_rev = doc_metadata.get("No. Revisi", "")
+        doc_date = doc_metadata.get("Tanggal Terbit", "")
         doc_title = doc_metadata.get("Judul", title)
 
         page_info = f" | p.{page_num}" if page_num is not None else ""
@@ -69,6 +70,8 @@ def _format_docs(docs: List[Document]) -> str:
             header_parts.append(f"Jenis Dokumen: {doc_type}")
         if doc_rev:
             header_parts.append(f"Revisi: {doc_rev}")
+        if doc_date:
+            header_parts.append(f"Tanggal Terbit: {doc_date}")
         header_parts.append(f"Nama File: {file_name}{page_info}")
         header_parts.append(f"Relevansi: {score:.2f}")
         
