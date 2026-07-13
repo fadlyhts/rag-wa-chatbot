@@ -56,11 +56,12 @@ class Settings(BaseSettings):
     VECTOR_SIZE: int = 768
     RAG_CHUNK_SIZE: int = 512
     RAG_CHUNK_OVERLAP: int = 50
-    RAG_TOP_K: int = 15
+    RAG_TOP_K: int = 30
     RAG_MIN_SCORE: float = 0.5
     RAG_ENABLE_CACHE: bool = True
     RAG_HYBRID_SEARCH: bool = True
     RAG_SPARSE_MODEL_NAME: str = "Qdrant/bm25"
+    USE_DOCLING: bool = False
     
     # WAHA
     WAHA_API_URL: str = "http://localhost:3000"
