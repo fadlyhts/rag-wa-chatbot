@@ -70,10 +70,10 @@ class DocumentProcessor:
         # Patterns for SOP / Instruksi Kerja headers
         patterns = {
             "Jenis Dokumen": r'\b(INSTRUKSI\s+KERJA|STANDARD\s+OPERATING\s+PROCEDURE|SOP)\b',
-            "Judul": r'Judul(?:\s+Dokumen)?\s*:\s*([\s\S]*?)(?=\n\s*(?:Cap\b|PT PERKEBUNAN\b|Nomor\b|Jenis\b|Status\b|$))',
-            "No. Dokumen": r'(?:No\.?|Nomor)\s*Dokumen\s*[^:\n]*:\s*([^\n]+)',
-            "No. Revisi": r'(?:No\.?|Nomor)\s*(?:Revisi|Remisi)\s*[^:\n]*:\s*([^\n]+)',
-            "Tanggal Terbit": r'Tanggal\s*Terbit\s*[^:\n]*:\s*([^\n]+)'
+            "Judul": r'Judul(?:\s+Dokumen)?(?:\s*:|\n)\s*([^\n]+)',
+            "No. Dokumen": r'(?:No\.?|Nomor)\s*Dokumen(?:\s*:|\n)\s*([^\n]+)',
+            "No. Revisi": r'(?:No\.?|Nomor)\s*(?:Revisi|Remisi)(?:\s*:|\n)\s*([^\n]+)',
+            "Tanggal Terbit": r'Tanggal\s*Terbit(?:\s*:|\n)\s*([^\n]+)'
         }
         
         for key, pattern in patterns.items():
@@ -94,9 +94,9 @@ class DocumentProcessor:
                 # Clean up if Tesseract added weird characters at the end
                 val = re.sub(r'[^a-zA-Z0-9\s\.\-\/]', '', val).strip()
                 
-                # Special fix for OCR misreading K01 as KO1
+                # Special fix for OCR misreading K01, B08, etc. as KO1, BO8
                 if key == "No. Dokumen":
-                    val = re.sub(r'KO(\d)', r'K0\1', val, flags=re.IGNORECASE)
+                    val = re.sub(r'([a-zA-Z])O(\d)', r'\g<1>0\2', val, flags=re.IGNORECASE)
                 
                 if val:
                     metadata[key] = val
@@ -117,65 +117,68 @@ class DocumentProcessor:
         
         # We look for keywords and then extract the subsequent text blocks
         
-        # 1. Disusun oleh
-        disusun_match = re.search(r'Disusun\s+oleh\s*:[\s\n]+([A-Za-z\s&]+?)(?=\n\s*(?:Tgl|Ditinjau|Disetujui|Ivan|Divisi|$))', cover_text, re.IGNORECASE)
-        # 2. Ditinjau oleh
-        ditinjau_match = re.search(r'Ditinjau\s+oleh\s*:[\s\n]+([A-Za-z\s&]+?)(?=\n\s*(?:Tgl|Disusun|Disetujui|Budiman|Divisi|$))', cover_text, re.IGNORECASE)
-        # 3. Disetujui Oleh
-        disetujui_match = re.search(r'Disetujui\s+[Oo]leh\s*:[\s\n]+([A-Za-z\s&]+?)(?=\n\s*(?:Diterima|Direktur|$))', cover_text, re.IGNORECASE)
-        
-        # The above simple regex might fail due to the table structure (Divisi and Names are mixed).
-        # A more robust approach for this specific layout:
-        
-        lines = cover_text.split('\n')
-        
-        # Simple line-based scanning for the specific known names (since we know the OCR structure)
-        # In a real dynamic system, we'd use a more sophisticated NER or LLM-based extraction.
-        # But here we can look for the names if they exist near the keywords.
-        disusun_oleh = ""
-        ditinjau_oleh = ""
-        disetujui_oleh = ""
-        alasan = ""
-        
-        for i, line in enumerate(lines):
-            line_lower = line.lower()
-            if "disusun oleh" in line_lower:
-                # Look ahead a few lines for names/divisions
-                for j in range(1, min(6, len(lines)-i)):
-                    if "ivan gusmawan" in lines[i+j].lower():
-                        disusun_oleh = "Ivan Gusmawan (Divisi Pengadaan & Teknologi Informasi)"
-                    if "divisi pengadaan" in lines[i+j].lower() and not disusun_oleh:
-                        disusun_oleh = lines[i+j].strip()
+        # Use LLM (Gemini) to dynamically parse the unstructured OCR text for names
+        try:
+            from google import genai
+            from google.genai import types
+            from app.rag.config import rag_config
+            import json
             
-            if "ditinjau oleh" in line_lower:
-                for j in range(1, min(6, len(lines)-i)):
-                    if "budiman nainggolan" in lines[i+j].lower():
-                        ditinjau_oleh = "Budiman Nainggolan (Divisi Manajemen Risiko dan Sustainability)"
-                    if "divisi manajemen risiko" in lines[i+j].lower() and not ditinjau_oleh:
-                        ditinjau_oleh = lines[i+j].strip()
-                        
-            if "disetujui oleh" in line_lower:
-                for j in range(1, min(6, len(lines)-i)):
-                    if "siwi peni" in lines[i+j].lower():
-                        disetujui_oleh = "Siwi Peni (Direktur SDM dan Teknologi Informasi)"
-                        
-            if "alasan:" in line_lower:
-                alasan_parts = []
-                for j in range(1, min(10, len(lines)-i)):
-                    if re.match(r'^\s*\|?\s*(?:Disusun|Ditinjau|Formulir)', lines[i+j], re.IGNORECASE):
-                        break
-                    if lines[i+j].strip():
-                        alasan_parts.append(lines[i+j].strip())
-                alasan = " ".join(alasan_parts)
+            client = genai.Client(api_key=rag_config.google_api_key)
+            prompt = f"""
+Kamu adalah sistem ekstraksi informasi dokumen SOP.
+Tugasmu adalah mengekstrak nama penyusun, peninjau, dan penyetuju dokumen dari teks cover/pengesahan berikut.
+Teks dari halaman pengesahan OCR seringkali berantakan (ada karakter acak).
+Abaikan karakter acak, temukan nama orang yang bertugas sebagai:
+1. Disusun oleh (Pembuat)
+2. Ditinjau oleh (Reviewer)
+3. Disetujui oleh (Approver)
+
+Berikan output HANYA dalam format JSON dengan key:
+- disusun_oleh (berisi Nama dan Jabatan, digabung jadi 1 string, contoh "Nama (Jabatan)")
+- ditinjau_oleh (berisi Nama dan Jabatan, digabung jadi 1 string)
+- disetujui_oleh (berisi Nama dan Jabatan, digabung jadi 1 string)
+- alasan (berisi alasan perubahan/penerbitan dokumen jika ada, jika tidak isi null)
+
+Jika orang/jabatan tidak ditemukan, isi dengan null.
+
+Teks cover:
+{cover_text}
+"""
+            response = client.models.generate_content(
+                model=rag_config.gemini_model.replace('models/', ''),
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1
+                )
+            )
+            
+            llm_info = json.loads(response.text)
+            
+            if llm_info.get("disusun_oleh"):
+                info['disusun_oleh'] = llm_info["disusun_oleh"]
+            if llm_info.get("ditinjau_oleh"):
+                info['ditinjau_oleh'] = llm_info["ditinjau_oleh"]
+            if llm_info.get("disetujui_oleh"):
+                info['disetujui_oleh'] = llm_info["disetujui_oleh"]
+            if llm_info.get("alasan"):
+                info['alasan'] = llm_info["alasan"]
                 
-        if disusun_oleh:
-            info['disusun_oleh'] = disusun_oleh
-        if ditinjau_oleh:
-            info['ditinjau_oleh'] = ditinjau_oleh
-        if disetujui_oleh:
-            info['disetujui_oleh'] = disetujui_oleh
-        if alasan:
-            info['alasan'] = alasan
+        except Exception as e:
+            logger.error(f"LLM Cover extraction failed: {e}")
+            # Fallback to extremely basic regex if LLM fails
+            for i, line in enumerate(lines):
+                line_lower = line.lower()
+                if "alasan:" in line_lower:
+                    alasan_parts = []
+                    for j in range(1, min(15, len(lines)-i)):
+                        if re.match(r'^\s*\|?\s*(?:Disusun|Ditinjau|Formulir)', lines[i+j], re.IGNORECASE):
+                            break
+                        if lines[i+j].strip():
+                            alasan_parts.append(lines[i+j].strip())
+                    info['alasan'] = " ".join(alasan_parts)
+                    break
             
         return info
     
@@ -622,7 +625,7 @@ class DocumentProcessor:
         pages = self._read_pdf_pages(file_path)
         return "\n".join(p["text"] for p in pages)
 
-    def _read_pdf_pages(self, file_path: Path) -> List[Dict[str, Any]]:
+    def _read_pdf_pages(self, file_path: Path, max_pages: int = None) -> List[Dict[str, Any]]:
         """
         Read PDF file and return text per page.
         
@@ -634,6 +637,8 @@ class DocumentProcessor:
             try:
                 with pdfplumber.open(file_path) as pdf:
                     for i, page in enumerate(pdf.pages, 1):
+                        if max_pages is not None and i > max_pages:
+                            break
                         page_text = page.extract_text() or ""
                         pages.append({"page_number": i, "text": page_text})
             except Exception as e:
@@ -642,6 +647,8 @@ class DocumentProcessor:
                     import PyPDF2
                     pdf_reader = PyPDF2.PdfReader(file)
                     for i, page in enumerate(pdf_reader.pages, 1):
+                        if max_pages is not None and i > max_pages:
+                            break
                         page_text = page.extract_text() or ""
                         pages.append({"page_number": i, "text": page_text})
         else:
@@ -649,6 +656,8 @@ class DocumentProcessor:
                 import PyPDF2
                 pdf_reader = PyPDF2.PdfReader(file)
                 for i, page in enumerate(pdf_reader.pages, 1):
+                    if max_pages is not None and i > max_pages:
+                        break
                     page_text = page.extract_text() or ""
                     pages.append({"page_number": i, "text": page_text})
         
@@ -659,7 +668,7 @@ class DocumentProcessor:
         # A normal text page usually has 1500-3000 chars. If < 500, it's likely just a footer/watermark.
         if avg_chars_per_page < 500 and OCR_AVAILABLE:
             logger.info(f"PDF appears to be scanned (avg {avg_chars_per_page:.1f} chars/page), using OCR: {file_path}")
-            pages = self._read_pdf_ocr_pages(file_path)
+            pages = self._read_pdf_ocr_pages(file_path, max_pages=max_pages)
         
         return pages
     
@@ -706,7 +715,7 @@ class DocumentProcessor:
         pages = self._read_pdf_ocr_pages(file_path)
         return "\n\n".join(p["text"] for p in pages)
 
-    def _read_pdf_ocr_pages(self, file_path: Path) -> List[Dict[str, Any]]:
+    def _read_pdf_ocr_pages(self, file_path: Path, max_pages: int = None) -> List[Dict[str, Any]]:
         """
         Read scanned PDF using OCR, returning text per page.
         
@@ -723,7 +732,10 @@ class DocumentProcessor:
             info = pdfinfo_from_path(file_path)
             total_pages = info["Pages"]
             
-            logger.info(f"PDF has {total_pages} pages - starting OCR processing (DPI: 200)")
+            if max_pages is not None:
+                total_pages = min(total_pages, max_pages)
+            
+            logger.info(f"PDF has {total_pages} pages to OCR - starting OCR processing (DPI: 200)")
             
             # Sangat Penting: Batasi Tesseract agar hanya menggunakan 1 thread CPU
             # Jika tidak dibatasi, Tesseract akan memakai semua core (100%) dan memicu crash/healthcheck timeout
@@ -1168,12 +1180,12 @@ class DocumentProcessor:
         )
         return chunks
 
-    def read_file_pages(self, file_path: str) -> List[Dict[str, Any]]:
+    def read_file_pages(self, file_path: str, max_pages: int = None) -> List[Dict[str, Any]]:
         """
-        Read file and return page-aware data.
-        For PDFs: returns actual page numbers.
-        For other formats: returns single page (page_number=1).
-        
+        Extracts text from a file (PDF, DOCX, TXT, CSV, XLSX) and returns a list of dictionaries.
+        Each dictionary represents a page (or a logical segment for non-paginated formats) 
+        and contains 'text' and 'page_number'.
+
         Returns:
             List of {"page_number": int, "text": str}
         """
@@ -1182,7 +1194,7 @@ class DocumentProcessor:
         
         try:
             if extension == '.pdf':
-                return self._read_pdf_pages(file_path)
+                return self._read_pdf_pages(file_path, max_pages=max_pages)
             else:
                 # Non-PDF: treat as single page
                 text = self.read_file(str(file_path))

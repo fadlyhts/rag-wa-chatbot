@@ -132,69 +132,154 @@ class FileProcessor:
             # PENTING: Jalankan di thread terpisah agar TIDAK memblokir event loop FastAPI
             # Tanpa ini, OCR yang CPU-intensive akan memblokir healthcheck dan menyebabkan container di-kill
             try:
-                pages = await asyncio.to_thread(
-                    self.document_processor.read_file_pages, str(file_path)
-                )
+                from app.rag.config import rag_config
                 
-                # Save combined text to DB for preview/search
-                full_text = "\n".join(p["text"] for p in pages)
-                doc.content = full_text
-                
-                # Extract structured metadata (Judul, No Dokumen, dll) from the first few pages
-                try:
-                    metadata = self.document_processor.extract_document_metadata(full_text[:5000])
-                    if metadata:
-                        doc.doc_metadata = metadata
-                        logger.info(f"Extracted document metadata: {metadata}")
-                except Exception as e:
-                    logger.warning(f"Failed to extract document metadata: {e}")
+                # Switch between Docling and original pytesseract parser
+                if getattr(rag_config, 'use_docling', False):
+                    logger.info(f"Using DoclingProcessor for document {document_id}")
+                    from app.rag.docling_processor import DoclingProcessor
                     
-                db.commit()
-                
-                total_pages = len(pages)
-                logger.info(
-                    f"Extracted {len(full_text)} chars from {doc.title} "
-                    f"({total_pages} pages)"
-                )
+                    # Instantiate directly (removes singleton behavior)
+                    docling_proc = DoclingProcessor()
+                    page_chunks = await asyncio.to_thread(
+                        docling_proc.process_document, str(file_path)
+                    )
+                    
+                    # Mock full_text so doc.content isn't empty
+                    for c in page_chunks:
+                        if "text" in c and isinstance(c["text"], str):
+                            c["text"] = c["text"].replace("PTPNI", "PTPN1").replace("PTPN I", "PTPN 1")
+                            import re
+                            c["text"] = re.sub(r'([a-zA-Z])O(\d)', r'\g<1>0\2', c["text"], flags=re.IGNORECASE)
+                    
+                    full_text = "\n".join(c["text"] for c in page_chunks)
+                    doc.content = full_text
+                    
+                    # Also run the standard cover page extractor to guarantee metadata like signatures is caught
+                    logger.info("Extracting cover page metadata for Docling chunks...")
+                    cover_pages = await asyncio.to_thread(
+                        self.document_processor.read_file_pages, str(file_path), max_pages=2
+                    )
+                    cover_info = self.document_processor._extract_cover_page_info(cover_pages)
+                    
+                    try:
+                        metadata = self.document_processor.extract_document_metadata(full_text[:5000])
+                        if metadata:
+                            doc.doc_metadata = metadata
+                    except:
+                        pass
+                        
+                    if cover_info:
+                        judul = doc.doc_metadata.get('Judul', doc.title) if doc.doc_metadata else doc.title
+                        no_dok = doc.doc_metadata.get('No. Dokumen', '') if doc.doc_metadata else ''
+                        
+                        qa_text = f"Informasi Pengesahan Dokumen SOP {judul}:\n"
+                        if no_dok:
+                            qa_text += f"Nomor Dokumen: {no_dok}\n"
+                        if cover_info.get('disusun_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang menyusun (pembuat) dokumen ini?\nJawaban: Dokumen SOP ini disusun oleh {cover_info['disusun_oleh']}.\n"
+                        if cover_info.get('ditinjau_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang meninjau (mereview) dokumen ini?\nJawaban: Dokumen SOP ini ditinjau oleh {cover_info['ditinjau_oleh']}.\n"
+                        if cover_info.get('disetujui_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang menyetujui (mengakui) dokumen ini?\nJawaban: Dokumen SOP ini disetujui oleh {cover_info['disetujui_oleh']}.\n"
+                        
+                        synthetic_chunk = {
+                            "text": qa_text,
+                            "page_number": 2,
+                            "page_numbers": [2],
+                            "heading": "Pengesahan Dokumen (Metadata)",
+                            "parent_heading": None,
+                        }
+                        page_chunks.insert(0, synthetic_chunk)
+                    
+                    doc.ocr_progress_current = len(page_chunks)
+                    doc.ocr_progress_total = len(page_chunks)
+                    db.commit()
+                else:
+                    logger.info(f"Using standard DocumentProcessor for document {document_id}")
+                    # Use PDFPlumber + PyTesseract for extraction
+                    pages = await asyncio.to_thread(
+                        self.document_processor.read_file_pages, str(file_path)
+                    )
+                    
+                    # Save combined text to DB for preview/search
+                    full_text = "\n".join(p["text"] for p in pages)
+                    doc.content = full_text
+                    
+                    # Extract structured metadata (Judul, No Dokumen, dll) from the first few pages
+                    try:
+                        metadata = self.document_processor.extract_document_metadata(full_text[:5000])
+                        if metadata:
+                            doc.doc_metadata = metadata
+                            logger.info(f"Extracted document metadata: {metadata}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract document metadata: {e}")
+                        
+                    doc.ocr_progress_current = len(pages)
+                    doc.ocr_progress_total = len(pages)
+                    db.commit()
+                    
+                    # Falls back to sentence-based chunking for non-structured docs
+                    for p in pages:
+                        if "text" in p and isinstance(p["text"], str):
+                            p["text"] = p["text"].replace("PTPNI", "PTPN1").replace("PTPN I", "PTPN 1")
+                            import re
+                            p["text"] = re.sub(r'([a-zA-Z])O(\d)', r'\g<1>0\2', p["text"], flags=re.IGNORECASE)
+                            
+                    page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
+                    
+                    cover_info = self.document_processor._extract_cover_page_info(pages[:2])
+                    
+                    if cover_info:
+                        judul = doc.doc_metadata.get('Judul', doc.title) if doc.doc_metadata else doc.title
+                        no_dok = doc.doc_metadata.get('No. Dokumen', '') if doc.doc_metadata else ''
+                        
+                        qa_text = f"Informasi Pengesahan Dokumen SOP {judul}:\n"
+                        if no_dok:
+                            qa_text += f"Nomor Dokumen: {no_dok}\n"
+                        if cover_info.get('disusun_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang menyusun (pembuat) dokumen ini?\nJawaban: Dokumen SOP ini disusun oleh {cover_info['disusun_oleh']}.\n"
+                        if cover_info.get('ditinjau_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang meninjau (mereview) dokumen ini?\nJawaban: Dokumen SOP ini ditinjau oleh {cover_info['ditinjau_oleh']}.\n"
+                        if cover_info.get('disetujui_oleh'):
+                            qa_text += f"Pertanyaan: Siapa yang menyetujui (mengakui) dokumen ini?\nJawaban: Dokumen SOP ini disetujui oleh {cover_info['disetujui_oleh']}.\n"
+                        
+                        synthetic_chunk = {
+                            "text": qa_text,
+                            # Label this chunk as page 2 so the LLM cites it properly
+                            "page_number": 2,
+                            "page_numbers": [2],
+                            "heading": "Pengesahan Dokumen (Metadata)",
+                            "parent_heading": None,
+                        }
+                        page_chunks.insert(0, synthetic_chunk)
             except Exception as e:
                 raise Exception(f"Text extraction failed: {str(e)}")
-            
-            if not full_text.strip():
-                raise Exception("Document is empty after extraction")
-            
-            # Chunk text using heading-aware semantic chunking
-            # Falls back to sentence-based chunking for non-structured docs
-            page_chunks = self.document_processor.chunk_text_semantic_with_pages(pages)
-            
-            cover_info = self.document_processor._extract_cover_page_info(pages[:2])
-            
-            if cover_info:
-                judul = doc.doc_metadata.get('Judul', doc.title) if doc.doc_metadata else doc.title
-                no_dok = doc.doc_metadata.get('No. Dokumen', '') if doc.doc_metadata else ''
-                
-                qa_text = f"Informasi Pengesahan Dokumen SOP {judul}:\n"
-                if no_dok:
-                    qa_text += f"Nomor Dokumen: {no_dok}\n"
-                if cover_info.get('disusun_oleh'):
-                    qa_text += f"Pertanyaan: Siapa yang menyusun (pembuat) dokumen ini?\nJawaban: Dokumen SOP ini disusun oleh {cover_info['disusun_oleh']}.\n"
-                if cover_info.get('ditinjau_oleh'):
-                    qa_text += f"Pertanyaan: Siapa yang meninjau (mereview) dokumen ini?\nJawaban: Dokumen SOP ini ditinjau oleh {cover_info['ditinjau_oleh']}.\n"
-                if cover_info.get('disetujui_oleh'):
-                    qa_text += f"Pertanyaan: Siapa yang menyetujui (mengakui) dokumen ini?\nJawaban: Dokumen SOP ini disetujui oleh {cover_info['disetujui_oleh']}.\n"
-                
-                synthetic_chunk = {
-                    "text": qa_text,
-                    # Label this chunk as page 2 so the LLM cites it properly
-                    "page_number": 2,
-                    "page_numbers": [2],
-                    "heading": "Pengesahan Dokumen (Metadata)",
-                    "parent_heading": None,
-                }
-                page_chunks.insert(0, synthetic_chunk)            
+
             # Prepend document title to chunk text to improve vector search relevance
             chunk_texts = []
+            valid_page_chunks = []
+            
             for c in page_chunks:
+                c_text = c.get('text', '').strip()
+                text_len = len(c_text)
+                text_lower = c_text.lower()
+                
+                # Keywords that indicate a chunk is important even if it's short
+                important_kws = ['tujuan', 'ruang lingkup', 'definisi', 'referensi', 'ketentuan', 
+                               'pengertian', 'prosedur', 'tanggung jawab', 'kebijakan', 'lampiran']
+                is_important = any(kw in text_lower for kw in important_kws)
+                
+                # Skip tiny noise chunks and repeated footers/headers
+                if text_len < 100 and not is_important:
+                    continue
+                    
+                # Extra check: skip if the chunk is just the document title (footer)
                 judul = doc.doc_metadata.get('Judul') if doc.doc_metadata else None
+                if judul and text_lower == judul.lower():
+                    continue
+                    
+                valid_page_chunks.append(c)
                 kategori = doc.doc_metadata.get('Jenis Dokumen') if doc.doc_metadata else None
                 
                 header_parts = []
@@ -205,10 +290,17 @@ class FileProcessor:
                     
                 if kategori:
                     header_parts.append(f"Kategori: {kategori}")
+                
+                if c.get('heading'):
+                    header_parts.append(f"Bagian: {c['heading']}")
+                elif c.get('parent_heading'):
+                    header_parts.append(f"Bagian: {c['parent_heading']}")
                     
                 header = "\n".join(header_parts)
                 chunk_texts.append(f"{header}\n\n{c['text']}")
-            logger.info(f"Split into {len(page_chunks)} semantic chunks")
+            
+            page_chunks = valid_page_chunks
+            logger.info(f"Filtered tiny chunks. Remaining: {len(page_chunks)} semantic chunks")
             
             # Generate embeddings
             logger.info(f"Starting embedding generation for {len(chunk_texts)} chunks...")
