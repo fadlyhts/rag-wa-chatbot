@@ -175,9 +175,12 @@ async def generate_ai_response(
         user = db.query(User).filter(User.id == user_id).first()
         
         # Add division filter if user belongs to a division
-        filters = None
         if user and user.division_id:
             filters = {"division_id": user.division_id}
+        else:
+            # If user has no division assigned, they shouldn't access any division's documents
+            # Passing a non-existent division (0 or -1) ensures they get no results instead of all results
+            filters = {"division_id": -1}
         
         # Get conversation history
         history = get_conversation_history(conversation_id, limit=5, db=db)
