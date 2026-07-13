@@ -10,6 +10,7 @@ from app.models.document_category import DocumentCategory
 from app.models.document_chunk import DocumentChunk
 from app.models.settings import Settings
 from app.models.division import Division
+from app.models.evaluation import EvaluationRun, EvaluationItem
 
 __all__ = [
     "User",
@@ -22,5 +23,7 @@ __all__ = [
     "AdminRole",
     "DocumentCategory",
     "DocumentChunk",
-    "Settings"
+    "Settings",
+    "EvaluationRun",
+    "EvaluationItem"
 ]
