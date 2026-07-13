@@ -73,4 +73,3 @@ class SparseEmbeddings:
         """Generate sparse embedding for a single text"""
         return self.generate_sparse_embeddings_batch([text])[0]
 
-# Singleton instance will be created in factory or used directly
